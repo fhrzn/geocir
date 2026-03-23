@@ -1,17 +1,15 @@
-from functools import partial
+import os
 
+import numpy as np
 import polars as pl
 import randomname
-import torch
-from torch.utils.data import DataLoader
+from PIL import Image
 from tqdm import tqdm
-from transformers import AutoModel, AutoProcessor
+from transformers import pipeline
 
-from src.datasets.mp16 import MP16Dataset
 from src.utils import (
     add_record_to_index,
     build_index,
-    clip_collate_fn,
     get_device,
     save_index,
 )
@@ -20,31 +18,28 @@ from src.utils import (
 def ingest(args):
     # prepare
     index = build_index(args.index_size)
-
     device = get_device()
-    clip_model = AutoModel.from_pretrained("openai/clip-vit-large-patch14").to(device)
-    clip_model = clip_model.eval()
-    clip_processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")
+    pipe = pipeline(
+        model="facebook/dinov2-base",
+        device=device,
+        pool=True,
+        task="image-feature-extraction",
+    )
 
     # dataset
     df = pl.read_csv(args.data_path)
-    dataset = MP16Dataset(df, img_col=args.img_col, img_base_path=args.img_base_path)
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        collate_fn=partial(clip_collate_fn, clip_processor),
-    )
+    img_paths = [
+        os.path.join(args.img_base_path, f"{id}.jpg") for id in df["id"].to_list()
+    ]
+    metadatas = df.to_dicts()
 
     # encode
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="encode"):
-            out = clip_model.get_image_features(
-                **{k: v.to(device) for k, v in batch.items()}
-            )
-            out = out.pooler_output.cpu().numpy()
-            add_record_to_index(index, out)
-
-    metadatas = df.to_dicts()
+    for i in tqdm(range(0, len(img_paths), args.batch_size), desc="batch encode"):
+        paths = img_paths[i : i + args.batch_size]
+        images = [Image.open(p).convert("RGB") for p in paths]
+        embeddings = pipe(images, batch_size=args.batch_size)
+        embeddings = np.array(embeddings, dtype=np.float32).squeeze(1)
+        add_record_to_index(index, embeddings)
 
     # save
     target_dir = args.output_dir if args.output_dir else randomname.generate(sep="_")

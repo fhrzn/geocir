@@ -27,8 +27,10 @@ Hard negatives (usually VERY LOW landmark_prob 0.00–0.24):
 - generic street/building with no specific landmark focus
 
 Label (choose ONE):
-religious_site, historic_civic, monument_memorial, tower_bridge_gate,
-museum_culture, leisure_park, urban_scene, natural, unknown
+park, museum, church, mosque, temple, monastery, shrine, castle, palace, fort, bridge, 
+tower, lighthouse, monument, cemetery, square, street, station, railway, airport, stadium, 
+theatre, library, school, zoo, garden, mountain, waterfall, lake, river, canal, beach, 
+island, cave, dam, archaeological site, building, settlement, landscape, port, unknown
 
 landmark_prob rules:
 - 0.85–0.99: primary subject is a specific landmark / famous place and is the focus
@@ -114,7 +116,7 @@ async def llm_call(
         # simple limiter
         # simple retry mechanism
         for it in range(3):
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
             # handle llm retry for invalid structured output
             try:
                 response = await client.beta.chat.completions.parse(
@@ -165,16 +167,46 @@ def build_structured_output_cls():
             description="descriptive reasoning of why such decision has been made."
         )
         label: Literal[
-            "religious_site",
-            "historic_civic",
-            "monument_memorial",
-            "tower",
+            "park",
+            "museum",
+            "church",
+            "mosque",
+            "temple",
+            "monastery",
+            "shrine",
+            "castle",
+            "palace",
+            "fort",
             "bridge",
-            "gate",
-            "museum_culture",
-            "leisure_park",
-            "urban_scene",
-            "natural",
+            "tower",
+            "lighthouse",
+            "monument",
+            "cemetery",
+            "square",
+            "street",
+            "station",
+            "railway",
+            "airport",
+            "stadium",
+            "theatre",
+            "library",
+            "school",
+            "zoo",
+            "garden",
+            "mountain",
+            "waterfall",
+            "lake",
+            "river",
+            "canal",
+            "beach",
+            "island",
+            "cave",
+            "dam",
+            "archaeological site",
+            "building",
+            "settlement",
+            "landscape",
+            "port",
             "unknown",
         ] = Field(description="best fit label to describe the given image")
 
