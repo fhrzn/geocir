@@ -5,17 +5,25 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
+from transformers import CLIPModel
 
 from .image_encoder import ImageEncoder
 from .location_encoder import LocationEncoder
 from .misc import file_dir, load_gps_data
+from .text_encoder import TextEncoder
 
 
 class GeoCLIP(nn.Module):
     def __init__(self, from_pretrained=True, queue_size=4096):
         super().__init__()
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
-        self.image_encoder = ImageEncoder()
+        self.clip = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
+        # Freeze CLIP
+        for param in self.clip.parameters():
+            param.requires_grad = False
+
+        self.image_encoder = ImageEncoder(self.clip)
+        self.text_encoder = TextEncoder(self.clip)
         self.location_encoder = LocationEncoder()
 
         self.gps_gallery = load_gps_data(
@@ -38,6 +46,9 @@ class GeoCLIP(nn.Module):
 
     def _load_weights(self):
         self.image_encoder.mlp.load_state_dict(
+            torch.load(f"{self.weights_folder}/image_encoder_mlp_weights.pth")
+        )
+        self.text_encoder.mlp.load_state_dict(
             torch.load(f"{self.weights_folder}/image_encoder_mlp_weights.pth")
         )
         self.location_encoder.load_state_dict(
@@ -142,9 +153,7 @@ class GeoCLIP(nn.Module):
             top_pred_prob (torch.Tensor): Top k GPS probabilities of shape (n, k).
         """
         images = [Image.open(image_path) for image_path in image_paths]
-        image_tensors = [
-            self.image_encoder.preprocess_image(image) for image in images
-        ]
+        image_tensors = [self.image_encoder.preprocess_image(image) for image in images]
         image_batch = torch.cat(image_tensors, dim=0).to(self.device)
 
         gps_gallery = self.gps_gallery.to(self.device)

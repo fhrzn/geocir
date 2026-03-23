@@ -1,0 +1,17 @@
+tower
+castle_fortress
+palace_manor
+church_cathedral
+mosque
+temple_shrine
+museum_theater
+railway_station
+stadium_arena
+arch_gate
+monument_statue
+fountain
+bridge
+ruins
+garden_park
+harbor_pier
+modern_building

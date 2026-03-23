@@ -23,6 +23,7 @@ class MP16Dataset(Dataset):
     def __getitem__(self, index: int):
         df_batch = self.df[index]
         path = df_batch[self.img_col].item()
+        path = path if ".jpg" in path else f"{path}.jpg"
         path = os.path.join(self.img_base_path, path)
 
         img = Image.open(path).convert("RGB")
