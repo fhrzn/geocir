@@ -1,54 +1,43 @@
-from typing import Dict
-
-import numpy as np
-
-from src.constant import LABELS2ID
-from src.utils import haversine
+from typing import List
 
 
-def precision_k(
-    gt_gpses: np.ndarray,
-    gt_labels: np.ndarray,
-    ref_meta: Dict,
-    topk: int,
-    min_dist: int,
+def ap_k(pred: List[int], gt: List[int], k: int):
+    R = len(gt)
+    normalizer = min(R, k)
+    hits = 0
+    cum_score = 0
+
+    for i, img_id in enumerate(pred[:k], start=1):
+        if img_id in gt:
+            hits += 1
+            prec_at_i = hits / i
+            cum_score += prec_at_i
+
+    return cum_score / normalizer
+
+
+def map_k(all_pred: List[List[int]], all_gt: List[List[int]], k: int):
+    assert len(all_pred) == len(all_gt)
+
+    ap_scores = [ap_k(pred, gt, k) for pred, gt in zip(all_pred, all_gt)]
+
+    return sum(ap_scores) / len(ap_scores)
+
+
+def evaluate(
+    all_pred: List[List[int]],
+    all_gt: List[List[int]],
+    query_img_ids: List[int],
+    ks: List[int] = [5, 10, 25, 50, 100],
 ):
-    prec_k = 0
-    for key, ref in ref_meta.items():
-        idx = int(key)
-        ref_gps = np.array([[r["LAT"], r["LON"]] for r in ref[:topk]])
-        ref_labels = np.array([LABELS2ID[r["label"]] for r in ref[:topk]])
+    # sanitize: remove self id from retrieved list
+    all_pred = [
+        [valid for valid in pred if valid != query_id]
+        for pred, query_id in zip(all_pred, query_img_ids)
+    ]
 
-        relevance = ref_labels == gt_labels[idx]
-        distances = haversine(gt_gpses[idx], ref_gps) >= min_dist
-        prec_k += np.average(relevance * distances)
+    results = {}
+    for k in ks:
+        results[f"mAP@{k}"] = map_k(all_pred, all_gt, k)
 
-    prec_k /= len(ref_meta)
-    return prec_k
-
-
-def map_k(
-    gt_gpses: np.ndarray,
-    gt_labels: np.ndarray,
-    ref_meta: Dict,
-    topk: int,
-    min_dist: int,
-):
-    map_k = 0
-    for key, ref in ref_meta.items():
-        idx = int(key)
-        ref_gps = np.array([[r["LAT"], r["LON"]] for r in ref[:topk]])
-        ref_labels = np.array([LABELS2ID[r["label"]] for r in ref[:topk]])
-
-        relevance = ref_labels == gt_labels[idx]
-        distances = haversine(gt_gpses[idx], ref_gps) >= min_dist
-
-        rel_far = (relevance * distances)[:topk]
-        prec_i = np.cumsum(rel_far) / np.arange(1, topk+1)
-        hits = rel_far.sum()
-        ap_k = 0.0 if hits == 0 else (np.average(prec_i * rel_far) / hits)
-
-        map_k += ap_k
-
-    map_k /= len(ref_meta)
-    return map_k
+    return results

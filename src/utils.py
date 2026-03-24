@@ -1,12 +1,22 @@
+import json
+import os
 import random
+from typing import Dict, List
 
+import faiss
 import numpy as np
 import torch
+import torch.nn.functional as F
 from qdrant_client import QdrantClient, models
-import faiss
-import os
-import json
-from typing import List, Dict
+
+
+def sum_compose(
+    img_emb: torch.Tensor, text_emb: torch.Tensor, alpha: float = 1.0, beta: float = 0.5
+):
+    composed = alpha * img_emb + beta * text_emb
+    composed = F.normalize(composed, dim=-1)
+
+    return composed
 
 
 def haversine(gps1: list | tuple | np.ndarray, gps2: list | tuple | np.ndarray):
