@@ -20,6 +20,7 @@ dependencies = [
     "polars>=1.38.0",
     "pycountry>=26.2.16",
     "pycountry-convert>=0.7.2",
+    "pyproj>=3.7.2",
     "qdrant-client>=1.16.2",
     "randomname>=0.2.1",
     "reverse-geocoder>=1.5.1",
