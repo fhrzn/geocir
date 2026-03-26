@@ -19,6 +19,19 @@ def sum_compose(
     return composed
 
 
+def gps_pivot_compose(
+    img_emb: torch.Tensor,
+    text_emb: torch.Tensor,
+    loc_emb: torch.Tensor,
+    alpha: float = 1.0,
+    beta: float = 0.5,
+):
+    composed = alpha * (img_emb - loc_emb) + beta * text_emb
+    composed = F.normalize(composed, dim=-1)
+
+    return composed
+
+
 def haversine(gps1: list | tuple | np.ndarray, gps2: list | tuple | np.ndarray):
     if not isinstance(gps1, np.ndarray):
         gps1 = np.array(gps1)
