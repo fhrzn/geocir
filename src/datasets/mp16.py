@@ -8,9 +8,11 @@ from transformers import AutoImageProcessor
 class ImageDataset(Dataset):
     def __init__(
         self,
-        img_paths: list[str],
-        img_ids: list[str],
+        processor=None,
+        img_paths: list[str] = None,
+        img_ids: list[str] = None,
     ):
+        self.processor = processor
         self.img_paths = img_paths
         self.img_ids = img_ids
 
@@ -19,6 +21,8 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index: int):
         img = Image.open(self.img_paths[index]).convert("RGB")
+        if self.processor is not None:
+            img = self.processor(img)
         return img, self.img_ids[index]
 
 
