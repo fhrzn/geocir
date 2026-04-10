@@ -1,7 +1,7 @@
 import json
 import os
 import random
-from typing import Dict, List
+from typing import Dict, List, Literal
 
 import faiss
 import numpy as np
@@ -66,7 +66,7 @@ def set_seed(seed: int) -> None:
 
 
 def get_device() -> torch.device:
-    return torch.device(
+    return (
         "cuda"
         if torch.cuda.is_available()
         else "mps"
@@ -96,13 +96,16 @@ def clip_collate_fn(processor, batch):
     return inputs
 
 
-def build_index(d: int = 768):
-    index = faiss.IndexHNSWFlat(d, 32, faiss.METRIC_INNER_PRODUCT)
+def build_index(d: int = 768, index_type: Literal["hnsw", "flat_ip"] = "hnsw"):
+    if index_type == "hnsw":
+        index = faiss.IndexHNSWFlat(d, 32, faiss.METRIC_INNER_PRODUCT)
+    elif index_type == "flat_ip":
+        index = faiss.IndexFlatIP(d)
     return index
 
 
 def add_record_to_index(index: faiss.IndexHNSWFlat, embeddings: np.ndarray):
-    faiss.normalize_L2(embeddings)
+    # faiss.normalize_L2(embeddings)
     index.add(embeddings)
 
 
