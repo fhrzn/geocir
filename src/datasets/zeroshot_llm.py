@@ -307,7 +307,7 @@ def smoke_test(args):
 if __name__ == "__main__":
     parser = ArgumentParser(description="Zero-shot landmark classification via vLLM VLM")
     parser.add_argument("--base-url", default="http://localhost:3456/v1")
-    parser.add_argument("--taxonomy-path", default="./notebooks/taxonomy.json")
+    parser.add_argument("--taxonomy-path", default="./taxonomy.json")
     parser.add_argument("--img-base-path", default="/mnt/yokoyamalab-nas/gldv2-full/train")
     parser.add_argument("--data-path", help="CSV with image IDs (required unless --smoke-test)")
     parser.add_argument("--id-col", default="id")
