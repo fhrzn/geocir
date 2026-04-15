@@ -1,6 +1,4 @@
 *.csv
-*.json
-!**/taxonomy.json
 .venv
 .vscode
 AlphaCLIP/
