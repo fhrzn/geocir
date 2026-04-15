@@ -23,9 +23,10 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index: int):
         img = Image.open(self.img_paths[index]).convert("RGB")
+        img_shape = img.size[::-1]
         if self.processor is not None:
-            img = self.processor(img)
-        return img, self.img_ids[index]
+            img = self.processor(img, return_tensors="pt")
+        return self.img_ids[index], img_shape, img
 
 
 class MP16Dataset(Dataset):
