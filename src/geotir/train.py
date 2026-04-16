@@ -1,5 +1,4 @@
 import argparse
-import os
 from pathlib import Path
 
 import mlflow
@@ -22,7 +21,18 @@ def train(args):
 
     processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
 
-    train_df = pl.read_csv(args.data)
+    train_df = pl.read_csv(args.data).rename({"predicted_label": "category"})
+
+    # Auto-compute pair_cap from data if not explicitly set:
+    # 75th-percentile of (category, country) group sizes // 2, clamped to at least 1.
+    if args.pair_cap is None:
+        group_sizes = (
+            train_df.group_by(["category", "country"])
+            .agg(pl.len().alias("n"))
+            .filter(pl.col("n") >= 2)["n"]
+        )
+        args.pair_cap = max(int(group_sizes.quantile(0.75)) // 2, 1)
+        print(f"Auto pair_cap: {args.pair_cap}")
 
     dataset = GeoTIRDataset(
         df=train_df,
@@ -70,6 +80,7 @@ def train(args):
         "epochs": args.epochs,
         "warmup_ratio": args.warmup_ratio,
         "scheduler": "cosine",
+        "pair_cap": args.pair_cap,
     }
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -150,7 +161,7 @@ def main():
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--pair-cap", type=int, default=1157, help="Max pairs per group per epoch")
+    parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Fraction of total steps used for linear warmup")
     args = parser.parse_args()
 
