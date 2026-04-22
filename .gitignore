@@ -10,3 +10,4 @@ checkpoints/
 .DS_Store
 index
 mlflow.db
+.env

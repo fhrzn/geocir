@@ -28,7 +28,7 @@ def ingest(args):
     clip_processor = AutoProcessor.from_pretrained(CLIP_MODEL_NAME)
 
     # dataset
-    df = pl.read_csv(args.data_path)
+    df = pl.read_csv(args.data_path).rename({"pred_label": "category"})
     dataset = GeoTIRDataset(
         df, base_img_path=args.img_base_path, processor=clip_processor
     )

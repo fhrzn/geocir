@@ -23,7 +23,7 @@ def ingest(args):
 
     device = get_device()
     model = GeoTIRModel(clip_model_name=CLIP_MODEL_NAME).to(device)
-    ckpt = torch.load(args.ckpt_path)
+    ckpt = torch.load(args.ckpt_path, map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
     model = model.eval()
     model = torch.compile(model)
@@ -31,7 +31,7 @@ def ingest(args):
     processor = AutoProcessor.from_pretrained(CLIP_MODEL_NAME)
 
     # dataset
-    df = pl.read_csv(args.data_path).rename({"predicted_label": "category"})
+    df = pl.read_csv(args.data_path).rename({"pred_label": "category"})
     dataset = GeoTIRDataset(
         df=df, base_img_path=args.img_base_path, processor=processor
     )

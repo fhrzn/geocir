@@ -98,7 +98,7 @@ class GeoTIRDataset(Dataset):
         row = self.df[index]
         path = row[self.img_col]
         path = path if ".jpg" in path else f"{path}.jpg"
-        path = os.path.join(self.base_img_path, row["src"], path)
+        path = os.path.join(self.base_img_path, path)
 
         img = Image.open(path).convert("RGB")
         

@@ -1,9 +1,9 @@
 import argparse
 from pathlib import Path
 
-import mlflow
 import polars as pl
 import torch
+import wandb
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
@@ -12,21 +12,22 @@ from src.datasets.mp16 import GeoTIRDataset, PairAwareBatchSampler, geo_collate_
 from src.geotir.model import GeoTIRModel
 
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14"
-MLFLOW_TRACKING_URI = "http://localhost:5555"
-EXPERIMENT_NAME = "geotir-clip-finetune"
+WANDB_PROJECT = "geotir-clip-finetune"
 
 
 def validate(model, loader, device):
     model.eval()
     total_loss = 0.0
     with torch.no_grad():
-        for batch in loader:
+        pbar = tqdm(loader, desc="validate", leave=False)
+        for batch in pbar:
             batch = {
                 k: v.to(device) if isinstance(v, torch.Tensor) else v
                 for k, v in batch.items()
             }
             output = model(batch)
             total_loss += output["loss"].item()
+            pbar.set_postfix(loss=f"{output['loss'].item():.4f}")
     return total_loss / len(loader)
 
 
@@ -53,11 +54,11 @@ def train_one_epoch(model, loader, optimizer, scheduler, device, epoch, global_s
         global_step += 1
 
         pbar.set_postfix(loss=f"{loss.item():.4f}")
-        mlflow.log_metrics(
+        wandb.log(
             {
-                "train_loss": loss.item(),
-                "temperature": output["temperature"],
-                "lr": scheduler.get_last_lr()[0],
+                "train/loss": loss.item(),
+                "train/temperature": output["temperature"],
+                "train/lr": scheduler.get_last_lr()[0],
             },
             step=global_step,
         )
@@ -153,30 +154,30 @@ def train(args):
         "pair_cap": args.pair_cap,
     }
 
-    mlflow.set_tracking_uri(args.mlflow_uri if args.mlflow_uri else MLFLOW_TRACKING_URI)
-    mlflow.set_experiment(EXPERIMENT_NAME)
-
     ckpt_dir = Path("checkpoints") / args.run_name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     global_step = 0
     best_loss = float("inf")
-    with mlflow.start_run(run_name=args.run_name) as run:
-        mlflow.log_params(hparams)
-        print(f"MLflow run: {run.info.run_id}")
+    with wandb.init(
+        project=args.wandb_project,
+        name=args.run_name,
+        config=hparams,
+    ) as run:
+        print(f"W&B run: {run.url}")
         print(f"Checkpoints: {ckpt_dir}")
 
         for epoch in tqdm(range(1, args.epochs + 1), desc="finetune"):
             epoch_loss, global_step = train_one_epoch(
                 model, loader, optimizer, scheduler, device, epoch, global_step
             )
-            mlflow.log_metric("epoch_train_loss", epoch_loss, step=epoch)
+            wandb.log({"epoch/train_loss": epoch_loss, "epoch": epoch}, step=global_step)
             tqdm.write(f"epoch {epoch} | train_loss {epoch_loss:.4f}")
 
             monitor_loss = epoch_loss
             if val_loader is not None:
                 val_loss = validate(model, val_loader, device)
-                mlflow.log_metric("epoch_val_loss", val_loss, step=epoch)
+                wandb.log({"epoch/val_loss": val_loss, "epoch": epoch}, step=global_step)
                 tqdm.write(f"epoch {epoch} | val_loss   {val_loss:.4f}")
                 monitor_loss = val_loss
 
@@ -191,7 +192,15 @@ def train(args):
 
             if monitor_loss < best_loss:
                 best_loss = monitor_loss
-                torch.save(ckpt, ckpt_dir / "best.pt")
+                best_path = ckpt_dir / "best.pt"
+                torch.save(ckpt, best_path)
+                artifact = wandb.Artifact(
+                    name=f"{args.run_name}-best",
+                    type="model",
+                    metadata={"epoch": epoch, "train_loss": epoch_loss, "monitor_loss": best_loss},
+                )
+                artifact.add_file(str(best_path))
+                run.log_artifact(artifact)
                 tqdm.write(f"  -> best saved (loss {best_loss:.4f})")
 
 
@@ -212,7 +221,7 @@ def main():
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Fraction of total steps used for linear warmup")
-    parser.add_argument("--mlflow-uri", default=MLFLOW_TRACKING_URI)
+    parser.add_argument("--wandb-project", default=WANDB_PROJECT, help="W&B project name")
     args = parser.parse_args()
 
     train(args)
