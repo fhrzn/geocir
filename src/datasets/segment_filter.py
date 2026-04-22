@@ -35,7 +35,7 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, index):
         img_id = self.df[index][self.img_col].item()
-        path = os.path.join(self.img_base_path, f"{img_id}.jpg")
+        path = os.path.join(self.img_base_path, (f"{img_id}.jpg" if ".jpg" not in img_id else img_id))
         img = Image.open(path).convert("RGB")
         size = img.size[::-1]  # (H, W) expected by post_process_semantic_segmentation
         return {"image": img, "size": size, "img_id": img_id}

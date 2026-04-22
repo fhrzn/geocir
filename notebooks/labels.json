@@ -1,0 +1,74 @@
+{
+    "tower": [
+        "This is a photo of a tall freestanding tower rising above its surroundings",
+        "This is a photo of a historic or modern tower standing alone against the sky"
+    ],
+    "castle_fortress": [
+        "This is a photo of a castle or fortress with thick stone walls and towers",
+        "This is a photo of a medieval fortification with battlements and a defensive wall"
+    ],
+    "palace_manor": [
+        "This is a photo of a grand palace or manor house with an ornate historic façade",
+        "This is a photo of a large royal residence with symmetrical wings and formal architecture"
+    ],
+    "church_cathedral": [
+        "This is a photo of a church or cathedral with spires, a dome, or a bell tower",
+        "This is a photo of a historic Christian place of worship with religious architecture"
+    ],
+    "mosque": [
+        "This is a photo of a mosque with a tall minaret and a large central dome",
+        "This is a photo of an Islamic place of worship with ornamental arches and a minaret"
+    ],
+    "temple_shrine": [
+        "This is a photo of a temple or shrine with tiered rooflines and ornate stone carvings",
+        "This is a photo of a religious monument with decorative stonework and traditional sacred architecture"
+    ],
+    "museum_gallery": [
+        "This is a photo of a museum or gallery with a grand civic façade",
+        "This is a photo of a large cultural institution building with columns or a monumental entrance"
+    ],
+    "theater_opera": [
+        "This is a photo of an opera house or theater with an ornate or iconic exterior",
+        "This is a photo of a performing arts venue with a grand historic or contemporary façade"
+    ],
+    "railway_station": [
+        "This is a photo of a railway station with a large vaulted hall or monumental entrance",
+        "This is a photo of a historic train terminal with arched windows and a grand clock"
+    ],
+    "stadium_arena": [
+        "This is a photo of a large stadium or arena with visible spectator tiers",
+        "This is a photo of a sports venue with a circular or oval structure and open seating"
+    ],
+    "arch_gate": [
+        "This is a photo of a triumphal arch or monumental stone gate standing in an open space",
+        "This is a photo of a large ceremonial archway marking the entrance to a city or monument"
+    ],
+    "monument_statue": [
+        "This is a photo of a large statue or monument standing on a tall pedestal",
+        "This is a photo of a commemorative column, obelisk, or figurative sculpture in a public space"
+    ],
+    "fountain": [
+        "This is a photo of a large ornamental fountain with water jets and sculptural figures",
+        "This is a photo of a historic decorative fountain at the center of a plaza or garden"
+    ],
+    "bridge": [
+        "This is a photo of a bridge spanning a river or body of water seen from the side",
+        "This is a photo of a large historic or iconic bridge with distinctive structural form"
+    ],
+    "ruins": [
+        "This is a photo of ancient stone ruins with crumbling columns, walls, or foundations",
+        "This is a photo of archaeological remains of a historic temple, amphitheater, or ancient city"
+    ],
+    "garden_park": [
+        "This is a photo of a formal ornamental garden with manicured paths, fountains, and greenery",
+        "This is a photo of a grand historic park surrounding a palace or civic monument"
+    ],
+    "harbor_pier": [
+        "This is a photo of a harbor or historic pier with boats and open water in view",
+        "This is a photo of a waterfront promenade or port with maritime structures and docked vessels"
+    ],
+    "modern_landmark": [
+        "This is a photo of a striking modern building with a bold or unconventional architectural form",
+        "This is a photo of an iconic contemporary structure with a distinctive silhouette against the sky"
+    ]
+}

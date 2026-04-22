@@ -76,6 +76,9 @@ class GeoTIRDataset(Dataset):
         processor: CLIPProcessor,
         img_col: str = "id",
         id_col: str = "id",
+        caption_col: str = "caption",
+        use_template: bool = True,
+        max_text_length: int = 77
     ):
         super().__init__()
         self.df = df.to_dicts()
@@ -83,6 +86,10 @@ class GeoTIRDataset(Dataset):
         self.processor = processor
         self.img_col = img_col
         self.id_col = id_col
+        self.caption_col = caption_col
+        self.use_template = use_template
+        self.max_text_length = max_text_length
+
 
     def __len__(self):
         return len(self.df)
@@ -91,15 +98,19 @@ class GeoTIRDataset(Dataset):
         row = self.df[index]
         path = row[self.img_col]
         path = path if ".jpg" in path else f"{path}.jpg"
-        path = os.path.join(self.base_img_path, path)
+        path = os.path.join(self.base_img_path, row["src"], path)
 
         img = Image.open(path).convert("RGB")
-        caption = f"A {row['category']} landmark located in {row['country']}"
+        
+        if self.use_template:
+            caption = f"A {row['category']} landmark located in {row['country']}"
+        else:
+            caption = row[self.caption_col]
 
         processed = self.processor(
             images=img,
             text=caption,
-            max_length=32,
+            max_length=self.max_text_length,
             padding="max_length",
             truncation=True,
             return_tensors="pt",

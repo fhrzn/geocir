@@ -15,6 +15,7 @@ dependencies = [
     "loralib>=0.1.2",
     "lxml>=6.0.2",
     "matplotlib>=3.10.8",
+    "mlflow>=3.11.1",
     "openai>=2.20.0",
     "outlines>=1.2.10",
     "peft>=0.18.1",
