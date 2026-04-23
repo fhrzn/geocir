@@ -31,7 +31,11 @@ def ingest(args):
     processor = AutoProcessor.from_pretrained(CLIP_MODEL_NAME)
 
     # dataset
-    df = pl.read_csv(args.data_path).rename({"pred_label": "category"})
+    df = pl.read_csv(args.data_path)
+    try:
+        df = df.rename({"pred_label": "category"})
+    except Exception:
+        df = df.rename({"predicted_label": "category"})
     dataset = GeoTIRDataset(
         df=df, base_img_path=args.img_base_path, processor=processor
     )

@@ -78,7 +78,8 @@ class GeoTIRDataset(Dataset):
         id_col: str = "id",
         caption_col: str = "caption",
         use_template: bool = True,
-        max_text_length: int = 77
+        max_text_length: int = 77,
+        src_col: str = "folder"
     ):
         super().__init__()
         self.df = df.to_dicts()
@@ -89,6 +90,7 @@ class GeoTIRDataset(Dataset):
         self.caption_col = caption_col
         self.use_template = use_template
         self.max_text_length = max_text_length
+        self.src_col = src_col
 
 
     def __len__(self):
@@ -98,7 +100,7 @@ class GeoTIRDataset(Dataset):
         row = self.df[index]
         path = row[self.img_col]
         path = path if ".jpg" in path else f"{path}.jpg"
-        path = os.path.join(self.base_img_path, path)
+        path = os.path.join(self.base_img_path, row[self.src_col], path)
 
         img = Image.open(path).convert("RGB")
         

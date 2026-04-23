@@ -8,8 +8,9 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
 
-from src.datasets.mp16 import GeoTIRDataset, geo_collate_fn
+from src.datasets.mp16 import GeoTIRDataset, PairAwareBatchSampler, geo_collate_fn
 from src.geotir.model import GeoTIRModel
+from src.utils import get_device
 
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14"
 WANDB_PROJECT = "geotir-clip-finetune"
@@ -67,11 +68,22 @@ def train_one_epoch(model, loader, optimizer, scheduler, device, epoch, global_s
 
 
 def train(args):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = get_device()
 
     processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
 
     train_df = pl.read_csv(args.data).rename({"pred_label": "category"})
+
+    # Auto-compute pair_cap from data if not explicitly set:
+    # 75th-percentile of (category, country) group sizes // 2, clamped to at least 1.
+    if args.pair_cap is None:
+        group_sizes = (
+            train_df.group_by(["category", "country"])
+            .agg(pl.len().alias("n"))
+            .filter(pl.col("n") >= 2)["n"]
+        )
+        args.pair_cap = max(int(group_sizes.quantile(0.75)) // 2, 1)
+        print(f"Auto pair_cap: {args.pair_cap}")
 
     dataset = GeoTIRDataset(
         df=train_df,
@@ -79,14 +91,17 @@ def train(args):
         processor=processor,
         use_template=args.use_caption_template,
         max_text_length=args.max_text_length,
+        src_col=args.src_col,
+        caption_col=args.caption_col
     )
-    # sampler = PairAwareBatchSampler(
-    #     df=train_df,
-    #     batch_size=args.batch_size,
-    #     drop_last=True,
-    #     cap=args.pair_cap,
-    # )
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True, collate_fn=geo_collate_fn)
+    sampler = PairAwareBatchSampler(
+        df=train_df,
+        batch_size=args.batch_size,
+        drop_last=True,
+        cap=args.pair_cap,
+    )
+    # loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True, collate_fn=geo_collate_fn)
+    loader = DataLoader(dataset, batch_sampler=sampler, collate_fn=geo_collate_fn)
 
     val_loader = None
     if args.val_data:
@@ -117,8 +132,8 @@ def train(args):
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
-    # total_steps = len(sampler) * args.epochs
-    total_steps = len(loader) * args.epochs
+    total_steps = len(sampler) * args.epochs
+    # total_steps = len(loader) * args.epochs
     warmup_steps = int(total_steps * args.warmup_ratio)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -139,6 +154,7 @@ def train(args):
         "lr": args.lr,
         "weight_decay": args.weight_decay,
         "epochs": args.epochs,
+        "pair_cap": args.pair_cap,
         "warmup_ratio": args.warmup_ratio,
         "scheduler": "cosine"
     }
@@ -203,12 +219,14 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--use-caption-template", action="store_true", default=True)
+    parser.add_argument("--use-caption-template", action="store_true")
+    parser.add_argument("--src-col", default="folder")
+    parser.add_argument("--caption-col", default="caption")
     parser.add_argument("--max-text-length", type=int, default=77)
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    # parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
+    parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Fraction of total steps used for linear warmup")
     parser.add_argument("--wandb-project", default=WANDB_PROJECT, help="W&B project name")
     args = parser.parse_args()

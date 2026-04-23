@@ -11,3 +11,5 @@ checkpoints/
 index
 mlflow.db
 .env
+wandb/
+*.log
