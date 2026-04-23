@@ -33,7 +33,7 @@ def multi_positive_infonce_loss(
     def _loss_one_direction(logits: torch.Tensor) -> torch.Tensor:
         has_positive = positive_mask.any(dim=1)
         if not positive_mask.any():
-            return torch.tensor(0, 0, device=logits.device, requires_grad=True)
+            return torch.tensor(0.0, device=logits.device, requires_grad=True)
         log_denom = torch.logsumexp(logits, dim=1)
         log_probs = logits - log_denom.unsqueeze(1)
         pos_log_probs = log_probs * positive_mask.float()
