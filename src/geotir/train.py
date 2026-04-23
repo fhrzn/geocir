@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
 
-from src.datasets.mp16 import GeoTIRDataset, PairAwareBatchSampler, geo_collate_fn
+from src.datasets.mp16 import GeoTIRDataset, geo_collate_fn
 from src.geotir.model import GeoTIRModel
 
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14"
@@ -73,17 +73,6 @@ def train(args):
 
     train_df = pl.read_csv(args.data).rename({"pred_label": "category"})
 
-    # Auto-compute pair_cap from data if not explicitly set:
-    # 75th-percentile of (category, country) group sizes // 2, clamped to at least 1.
-    if args.pair_cap is None:
-        group_sizes = (
-            train_df.group_by(["category", "country"])
-            .agg(pl.len().alias("n"))
-            .filter(pl.col("n") >= 2)["n"]
-        )
-        args.pair_cap = max(int(group_sizes.quantile(0.75)) // 2, 1)
-        print(f"Auto pair_cap: {args.pair_cap}")
-
     dataset = GeoTIRDataset(
         df=train_df,
         base_img_path=args.img_path,
@@ -91,13 +80,13 @@ def train(args):
         use_template=args.use_caption_template,
         max_text_length=args.max_text_length,
     )
-    sampler = PairAwareBatchSampler(
-        df=train_df,
-        batch_size=args.batch_size,
-        drop_last=True,
-        cap=args.pair_cap,
-    )
-    loader = DataLoader(dataset, batch_sampler=sampler, collate_fn=geo_collate_fn)
+    # sampler = PairAwareBatchSampler(
+    #     df=train_df,
+    #     batch_size=args.batch_size,
+    #     drop_last=True,
+    #     cap=args.pair_cap,
+    # )
+    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True, collate_fn=geo_collate_fn)
 
     val_loader = None
     if args.val_data:
@@ -109,13 +98,13 @@ def train(args):
             use_template=args.use_caption_template,
             max_text_length=args.max_text_length,
         )
-        val_sampler = PairAwareBatchSampler(
-            df=val_df,
-            batch_size=args.batch_size,
-            drop_last=False,
-            cap=args.pair_cap,
-        )
-        val_loader = DataLoader(val_dataset, batch_sampler=val_sampler, collate_fn=geo_collate_fn)
+        # val_sampler = PairAwareBatchSampler(
+        #     df=val_df,
+        #     batch_size=args.batch_size,
+        #     drop_last=False,
+        #     cap=args.pair_cap,
+        # )
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True, collate_fn=geo_collate_fn)
 
     model = GeoTIRModel(
         clip_model_name=CLIP_MODEL_NAME,
@@ -128,7 +117,8 @@ def train(args):
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
 
-    total_steps = len(sampler) * args.epochs
+    # total_steps = len(sampler) * args.epochs
+    total_steps = len(loader) * args.epochs
     warmup_steps = int(total_steps * args.warmup_ratio)
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -150,8 +140,7 @@ def train(args):
         "weight_decay": args.weight_decay,
         "epochs": args.epochs,
         "warmup_ratio": args.warmup_ratio,
-        "scheduler": "cosine",
-        "pair_cap": args.pair_cap,
+        "scheduler": "cosine"
     }
 
     ckpt_dir = Path("checkpoints") / args.run_name
@@ -219,7 +208,7 @@ def main():
     parser.add_argument("--lora-r", type=int, default=16)
     parser.add_argument("--lora-alpha", type=int, default=32)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
-    parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
+    # parser.add_argument("--pair-cap", type=int, default=None, help="Max pairs per (category, country) group per epoch. Auto-computed from data if omitted.")
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Fraction of total steps used for linear warmup")
     parser.add_argument("--wandb-project", default=WANDB_PROJECT, help="W&B project name")
     args = parser.parse_args()

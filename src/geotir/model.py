@@ -5,19 +5,10 @@ from peft import LoraConfig, get_peft_model
 from transformers import CLIPModel
 
 
-def build_positive_mask(categories: list[str], countries: list[str]) -> torch.Tensor:
-    """
-    Returns a (N, N) boolean mask where mask[i, j] = True
-    if sample i and j share the same (category, country) group.
-    Diagonal is excluded (a sample is not its own positive).
-    """
-    keys = [f"{cat}||{ctr}" for cat, ctr in zip(categories, countries)]
-    N = len(keys)
-    mask = torch.zeros(N, N, dtype=torch.bool)
-    for i in range(N):
-        for j in range(N):
-            if i != j and keys[i] == keys[j]:
-                mask[i, j] = True
+def build_positive_mask(categories, countries):
+    keys = torch.tensor([hash(f"{c}||{r}") for c, r in zip(categories, countries)])
+    mask = (keys.unsqueeze(0) == keys.unsqueeze(1))
+    mask.fill_diagonal_(False)
     return mask
 
 
@@ -41,6 +32,8 @@ def multi_positive_infonce_loss(
 
     def _loss_one_direction(logits: torch.Tensor) -> torch.Tensor:
         has_positive = positive_mask.any(dim=1)
+        if not positive_mask.any():
+            return torch.tensor(0, 0, device=logits.device, requires_grad=True)
         log_denom = torch.logsumexp(logits, dim=1)
         log_probs = logits - log_denom.unsqueeze(1)
         pos_log_probs = log_probs * positive_mask.float()
