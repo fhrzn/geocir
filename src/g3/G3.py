@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from pyproj import Proj, Transformer
-from transformers import CLIPImageProcessor, CLIPModel, CLIPTokenizer
+from transformers import CLIPImageProcessor, CLIPModel, CLIPProcessor, CLIPTokenizer
 
 from .rff.layers import GaussianEncoding
 
@@ -67,7 +67,7 @@ class G3(torch.nn.Module):
         self,
     ):
         super(G3, self).__init__()
-
+        self._processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.vision_processor = CLIPImageProcessor.from_pretrained(
             "openai/clip-vit-large-patch14"
         )
