@@ -34,7 +34,7 @@ def ingest(args):
     except Exception:
         df = df.rename({"predicted_label": "category"})
     dataset = GeoTIRDataset(
-        df, base_img_path=args.img_base_path, processor=clip_processor
+        df, base_img_path=args.img_base_path, processor=clip_processor, src_col=args.src_col
     )
     loader = DataLoader(dataset, batch_size=args.batch_size)
 
@@ -66,6 +66,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--index-size", type=int, default=768)
     parser.add_argument("--index-type", default="flat_ip")
+    parser.add_argument("--src-col", default="folder")
     parser.add_argument("--output-dir")
 
     args = parser.parse_args()
