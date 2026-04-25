@@ -1,5 +1,4 @@
 *.csv
-*.json
 .venv
 .vscode
 AlphaCLIP/
@@ -10,3 +9,7 @@ checkpoints/
 *.pth
 .DS_Store
 index
+mlflow.db
+.env
+wandb/
+*.log

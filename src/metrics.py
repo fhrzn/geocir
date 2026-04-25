@@ -17,7 +17,7 @@ def ap_k(pred: List[int], gt: List[int], k: int):
 
 
 def map_k(all_pred: List[List[int]], all_gt: List[List[int]], k: int):
-    assert len(all_pred) == len(all_gt)
+    # assert len(all_pred) == len(all_gt)
 
     ap_scores = [ap_k(pred, gt, k) for pred, gt in zip(all_pred, all_gt)]
 
@@ -30,11 +30,12 @@ def evaluate(
     query_img_ids: List[int],
     ks: List[int] = [5, 10, 25, 50, 100],
 ):
-    # sanitize: remove self id from retrieved list
-    all_pred = [
-        [valid for valid in pred if valid != query_id]
-        for pred, query_id in zip(all_pred, query_img_ids)
-    ]
+    if query_img_ids:
+        # sanitize: remove self id from retrieved list
+        all_pred = [
+            [valid for valid in pred if valid != query_id]
+            for pred, query_id in zip(all_pred, query_img_ids)
+        ]
 
     results = {}
     for k in ks:

@@ -1,17 +1,15 @@
-from functools import partial
-
 import polars as pl
 import randomname
 import torch
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 from tqdm import tqdm
 
-from src.datasets.mp16 import MP16Dataset
+from src.datasets.mp16 import GeoTIRDataset
 from src.geoclip import GeoCLIP
 from src.utils import (
     add_record_to_index,
     build_index,
-    clip_collate_fn,
     get_device,
     save_index,
 )
@@ -28,18 +26,24 @@ def ingest(args):
 
     # dataset
     df = pl.read_csv(args.data_path)
-    dataset = MP16Dataset(df, img_col=args.img_col, img_base_path=args.img_base_path)
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        collate_fn=partial(clip_collate_fn, geoclip_processor),
+    try:
+        df = df.rename({"pred_label": "category"})
+    except Exception:
+        df = df.rename({"predicted_label": "category"})
+    dataset = GeoTIRDataset(
+        df,
+        base_img_path=args.img_base_path,
+        processor=geoclip_processor,
+        src_col=args.src_col,
     )
+    loader = DataLoader(dataset, batch_size=args.batch_size)
 
     # encode
     with torch.no_grad():
         for batch in tqdm(loader, desc="encode"):
             out = geoclip_model.image_encoder(batch["pixel_values"].to(device))
-            out = out.cpu().numpy()
+            out = out.cpu()
+            out = F.normalize(out, dim=-1).numpy()
             add_record_to_index(index, out)
 
     metadatas = df.to_dicts()
@@ -58,8 +62,11 @@ if __name__ == "__main__":
     parser.add_argument("--data-path", required=True)
     parser.add_argument("--img-base-path", default="../datasets/mp16-reason/images")
     parser.add_argument("--img-col", default="IMG_ID")
+    parser.add_argument("--id-col", default="IMG_ID")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--index-size", type=int, default=768)
+    parser.add_argument("--index-type", default="flat_ip")
+    parser.add_argument("--src-col", default="folder")
     parser.add_argument("--output-dir")
 
     args = parser.parse_args()

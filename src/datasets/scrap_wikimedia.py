@@ -1,15 +1,16 @@
 import argparse
 import asyncio
+import csv
+import os
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional
+from typing import AsyncIterator, Optional
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 import polars as pl
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-import csv
 
 GEO_DOMAINS = ("geohack.toolforge.org", "tools.wmflabs.org")
 MOVED_KEYWORDS = (
@@ -216,10 +217,12 @@ async def _scrape_one_with_semaphore(
     url: str,
     max_pages: int,
     timeout: float,
+    delay: float,
 ) -> dict:
     async with sem:
         try:
-            await asyncio.sleep(3)
+            if delay > 0:
+                await asyncio.sleep(delay)
             r = await scrape_commons_coordinates_async(
                 client, url, max_pages=max_pages, timeout=timeout
             )
@@ -243,8 +246,12 @@ async def _scrape_one_with_semaphore(
 
 
 async def scrape_many_coordinates(
-    urls: list[str], concurrency: int = 20, max_pages: int = 12, timeout: float = 20.0
-) -> list[dict]:
+    urls: list[str],
+    concurrency: int = 20,
+    max_pages: int = 12,
+    timeout: float = 20.0,
+    delay: float = 1.0,
+) -> AsyncIterator[dict]:
     sem = asyncio.Semaphore(concurrency)
     limits = httpx.Limits(
         max_connections=concurrency * 2, max_keepalive_connections=concurrency
@@ -256,58 +263,74 @@ async def scrape_many_coordinates(
         tasks = [
             asyncio.create_task(
                 _scrape_one_with_semaphore(
-                    client, sem, url, max_pages=max_pages, timeout=timeout
+                    client, sem, url, max_pages=max_pages, timeout=timeout, delay=delay
                 )
             )
             for url in urls
         ]
 
-        results: list[dict] = []
         success_count = 0
         error_count = 0
         with tqdm(total=len(tasks), desc="Scraping Wikimedia", unit="url") as pbar:
             for fut in asyncio.as_completed(tasks):
                 item = await fut
-                results.append(item)
                 if item.get("error"):
                     error_count += 1
                 else:
                     success_count += 1
                 pbar.set_postfix(success=success_count, error=error_count)
                 pbar.update(1)
-        return results
-    
+                yield item
+
+
+FIELDNAMES = ["id", "landmark_id", "input_url", "resolved_url", "geohack_url", "latitude", "longitude", "error"]
+
+
 async def main(args):
     df = pl.read_csv(args.data_path)
     urls = df["category"].to_list()
-    
-    results = await scrape_many_coordinates(urls, concurrency=20)
+    landmark_ids = df["landmark_id"].to_list()
 
-    with open(args.output_path, "w") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "landmark_id",
-                "input_url",
-                "resolved_url",
-                "geohack_url",
-                "latitude",
-                "longitude",
-                "error",
-            ],
-        )
+    url_meta = {
+        url: {"landmark_id": lid}
+        for url, lid in zip(urls, landmark_ids)
+    }
 
-        writer.writeheader()
-        for res in results:
-            writer.writerow(res)
+    # Checkpoint: skip URLs already present in the output file
+    done_urls: set[str] = set()
+    if os.path.exists(args.output_path):
+        existing = pl.read_csv(args.output_path, infer_schema_length=0)
+        done_urls = set(existing["input_url"].to_list())
+        print(f"Resuming: skipping {len(done_urls)} already-scraped URLs")
+
+    urls_to_scrape = [u for u in urls if u not in done_urls]
+    if not urls_to_scrape:
+        print("All URLs already scraped.")
+        return
+
+    mode = "a" if done_urls else "w"
+    with open(args.output_path, mode, newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        if not done_urls:
+            writer.writeheader()
+
+        async for res in scrape_many_coordinates(
+            urls_to_scrape,
+            concurrency=args.worker,
+            delay=args.delay,
+        ):
+            meta = url_meta.get(res["input_url"], {"landmark_id": None})
+            writer.writerow({**meta, **res})
+            f.flush()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", required=True)
     parser.add_argument("--output-path", required=True)
-    parser.add_argument("--worker", type=int, default=100)
+    parser.add_argument("--worker", type=int, default=50)
+    parser.add_argument("--delay", type=float, default=1.0, help="Per-request delay in seconds")
     args = parser.parse_args()
-    
+
     asyncio.run(main(args))
     
