@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoProcessor
 
-from src.datasets.mp16 import GeoTIRDataset
+from data.data import GeoTIRDataset
 from src.geotir.model import GeoTIRModel
 from src.utils import (
     add_record_to_index,

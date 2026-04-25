@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.datasets.mp16 import GeoTIRDataset
+from data.data import GeoTIRDataset
 from src.g3 import G3
 from src.utils import (
     add_record_to_index,

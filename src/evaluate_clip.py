@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModel, CLIPProcessor
 
-from src.datasets.query_builder import build_queries
+from src.data.query_builder import build_queries
 from src.metrics import evaluate
 from src.utils import get_device, read_index
 

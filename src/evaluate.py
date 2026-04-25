@@ -6,7 +6,7 @@ import polars as pl
 import torch
 from transformers import CLIPProcessor
 
-from src.datasets.query_builder import build_queries
+from src.data.query_builder import build_queries
 from src.geotir.model import GeoTIRModel
 from src.metrics import evaluate
 from src.utils import get_device, read_index

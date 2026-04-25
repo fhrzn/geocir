@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
 
-from src.datasets.mp16 import GeoTIRDataset, PairAwareBatchSampler, geo_collate_fn
+from data.data import GeoTIRDataset, PairAwareBatchSampler, geo_collate_fn
 from src.geotir.model import GeoTIRModel
 from src.utils import get_device
 
