@@ -1,25 +1,4 @@
 {
-  "religious_christian": [
-    "A photo of a Christian church, cathedral, or basilica.",
-    "An exterior view of a historic Christian abbey or monastery.",
-    "An architectural photo of a Christian religious building with a cross-topped tower or gothic arches.",
-    "A tourist photo of an iconic Christian chapel.",
-    "An aerial or satellite view of a large Christian cathedral complex."
-  ],
-  "religious_islamic": [
-    "A photo of an Islamic mosque or madrasa.",
-    "An exterior view of a mosque with minarets and a dome.",
-    "An architectural photograph of an Islamic mausoleum or dargah.",
-    "A tourist photo of an iconic Islamic place of worship.",
-    "An aerial or satellite view of a grand mosque complex."
-  ],
-  "religious_other": [
-    "A photo of a non-Christian and non-Islamic place of worship.",
-    "An exterior view of a Hindu temple, Buddhist pagoda, or Shinto shrine.",
-    "A tourist photo of a Sikh gurdwara or Jewish synagogue.",
-    "An architectural photo of a historic Buddhist stupa or Jain temple.",
-    "An aerial or satellite view of an ancient temple complex or shrine."
-  ],
   "palace_castle": [
     "A photo of a grand royal palace or historic castle.",
     "An exterior view of a fortified citadel or fortress.",
@@ -54,33 +33,5 @@
     "A landscape photo featuring a large suspension bridge.",
     "A tourist photo of an iconic bridge crossing a body of water.",
     "An aerial or satellite view of a long bridge or viaduct."
-  ],
-  "ruins_archaeological": [
-    "A photo of ancient ruins or an excavated archaeological site.",
-    "A landscape view of ruined temples or ancient city remains.",
-    "A tourist photo of historical archaeological excavations.",
-    "An exterior view of well-preserved ancient stone ruins.",
-    "An aerial or satellite view of a sprawling archaeological site or ancient ruins."
-  ],
-  "garden_park_fountain": [
-    "A photo of a beautifully designed botanical garden or public park.",
-    "An exterior view of a decorative landmark fountain or formal plaza.",
-    "A landscape photograph of a grand palace garden.",
-    "A tourist photo of an iconic public fountain or landscape monument.",
-    "An aerial or satellite view of a large geometric garden or park layout."
-  ],
-  "other_heritage": [
-    "A photo of a historic urban district, industrial heritage site, or canal.",
-    "A landscape view of a historic harbor, waterway, or old town ensemble.",
-    "An exterior view of an iconic historic university, hospital, or mill.",
-    "A tourist photo of a historic town square or military cemetery.",
-    "An aerial or satellite view of a historic district, canal system, or natural harbor."
-  ],
-  "natural_landmark": [
-    "A photo of a notable natural geographic formation like a mountain or volcano.",
-    "A landscape view of a spectacular canyon, waterfall, or rock formation.",
-    "A nature photograph of a prominent glacier or landmark island.",
-    "A tourist photo of a famous natural landmark without built structures.",
-    "A satellite image or aerial view of a massive natural geological formation."
   ]
 }
