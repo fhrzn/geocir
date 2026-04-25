@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
 
 from data.data import GeoTIRDataset, PairAwareBatchSampler, geo_collate_fn
-from src.geotir.model import GeoTIRModel
+from model.geotir.model import GeoTIRModel
 from src.utils import get_device
 
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14"

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from transformers import AutoProcessor
 
 from data.data import GeoTIRDataset
-from src.geotir.model import GeoTIRModel
+from model.geotir.model import GeoTIRModel
 from src.utils import (
     add_record_to_index,
     build_index,
