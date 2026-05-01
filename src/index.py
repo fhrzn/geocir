@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel, AutoProcessor
 
-from data.data import GeoTIRDataset
+from src.data.data import GeoTIRDataset
 from src.model.g3 import G3
 from src.model.geoclip import GeoCLIP
 from src.model.geotir.model import GeoTIRModel

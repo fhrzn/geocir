@@ -2,7 +2,7 @@ import torch.nn as nn
 
 from typing import Optional
 from torch import Tensor
-from ....g3.rff import functional
+from ...g3.rff import functional
 
 class GaussianEncoding(nn.Module):
     """Layer for mapping coordinates using random Fourier features"""
