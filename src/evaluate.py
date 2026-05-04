@@ -119,6 +119,13 @@ _MODEL_REGISTRY = {
 
 def _load_index_and_queries(args):
     faiss_index, meta = read_index(args.index_dir)
+
+    if args.test_query:
+        with open(args.test_query) as f:
+            payload = json.load(f)
+        queries = payload["data"] if isinstance(payload, dict) else payload
+        return faiss_index, queries
+
     records = meta["metadata"]
 
     for i, rec in enumerate(records):
@@ -217,6 +224,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", required=True, choices=list(_MODEL_REGISTRY))
     parser.add_argument("--index-dir", required=True)
     parser.add_argument("--ckpt-path")
+    parser.add_argument("--test-query", type=str, default=None)
     parser.add_argument("--min-relevant", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--breakdown", action="store_true")

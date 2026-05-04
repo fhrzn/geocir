@@ -28,6 +28,7 @@ dependencies = [
     "reverse-geocoder>=1.5.1",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.0",
+    "seaborn>=0.13.2",
     "sentence-transformers>=5.3.0",
     "sentencepiece>=0.2.1",
     "setuptools>=80.10.2",
