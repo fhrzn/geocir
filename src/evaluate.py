@@ -189,6 +189,19 @@ def _eval_and_report(all_pred, all_gt, queries, args):
         _print_breakdown("by country", ctr_results)
         results["by_country"] = ctr_results
 
+        if any("region" in q for q in queries):
+            continents = sorted(set(q["region"] for q in queries if "region" in q and q["region"]))
+            cont_results = {
+                cont: evaluate(
+                    [all_pred[i] for i, q in enumerate(queries) if q.get("region") == cont],
+                    [all_gt[i] for i, q in enumerate(queries) if q.get("region") == cont],
+                    query_img_ids=None, ks=KS,
+                )
+                for cont in continents
+            }
+            _print_breakdown("by continent", cont_results)
+            results["by_continent"] = cont_results
+
     if args.output:
         with open(args.output, "w") as f:
             json.dump(results, f, indent=2)

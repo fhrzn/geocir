@@ -25,15 +25,20 @@ def build_queries(
     """
     queries = []
 
+    has_region = "region" in df.columns
+
     for (category, country), group in df.group_by(["category", "country"]):
         indices = group["row_idx"].to_list()
         if len(indices) < min_relevant:
             continue
-        queries.append({
+        entry = {
             "text": f"A {category} landmark located in {country}",
             "category": category,
             "country": country,
             "relevant_indices": indices,
-        })
+        }
+        if has_region:
+            entry["region"] = group["region"][0]
+        queries.append(entry)
 
     return queries
