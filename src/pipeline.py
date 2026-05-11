@@ -22,7 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from src.evaluate import run_eval
-from src.geotir.train import train
+from model.geotir.train import train
 from src.index_geotir import ingest
 
 
