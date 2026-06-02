@@ -92,10 +92,11 @@ def ingest(args):
     processor, encode_fn = _MODEL_REGISTRY[args.model](args, device)
 
     df = pl.read_csv(args.data_path)
-    try:
-        df = df.rename({"pred_label": "category"})
-    except Exception:
-        df = df.rename({"predicted_label": "category"})
+    if "category" not in df.columns:
+        try:
+            df = df.rename({"pred_label": "category"})
+        except Exception:
+            df = df.rename({"predicted_label": "category"})
 
     dataset = GeoTIRDataset(df, base_img_path=args.img_base_path, processor=processor, src_col=args.src_col)
     loader = DataLoader(dataset, batch_size=args.batch_size)

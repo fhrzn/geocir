@@ -3,17 +3,21 @@ Reverse geocoding utility to extract country, country code, region, and subregio
 from latitude and longitude coordinates using reverse_geocoder and pycountry.
 """
 
+import argparse
+import asyncio
+import math
+from pathlib import Path
 from typing import Iterable
 
+import country_converter as coco
+import httpx
 import polars as pl
-import reverse_geocoder as rg
 import pycountry
 import pycountry_convert as pc
-import country_converter as coco
+import reverse_geocoder as rg
 from tqdm import tqdm
-import argparse
-from pathlib import Path
-import math
+from tqdm.asyncio import tqdm as atqdm
+
 
 def _build_country_df() -> pl.DataFrame:
     """Build a country_code → country/region/subregion mapping.
@@ -39,12 +43,14 @@ def _build_country_df() -> pl.DataFrame:
         except Exception:
             subregion = None
 
-        records.append({
-            "country_code": c.alpha_2,
-            "country": c.name,
-            "region": region,
-            "subregion": subregion,
-        })
+        records.append(
+            {
+                "country_code": c.alpha_2,
+                "country": c.name,
+                "region": region,
+                "subregion": subregion,
+            }
+        )
     return pl.DataFrame(records)
 
 
@@ -110,7 +116,7 @@ def reverse_geocode_df(
         .with_row_index("coord_id")
         .rename(
             {
-                "name": "rg_name",
+                "name": "city",
                 "admin1": "rg_admin1",
                 "admin2": "rg_admin2",
                 "cc": "country_code",
@@ -126,10 +132,9 @@ def reverse_geocode_df(
     )
 
     lookup = (
-        unique_coords
-        .join(rg_df, on="coord_id", how="left")
+        unique_coords.join(rg_df, on="coord_id", how="left")
         .drop("coord_id")
-        .select([lat_col, lon_col, "country_code", "country", "region", "subregion"])
+        .select([lat_col, lon_col, "country_code", "country", "region", "subregion", "city"])
     )
 
     return df.with_columns(
@@ -140,6 +145,28 @@ def reverse_geocode_df(
         on=[lat_col, lon_col],
         how="left",
     )
+
+
+async def get_city_nominatim(img_id: str, lat: float, lon: float):
+    def extract_city(address: dict) -> str | None:
+        # Nominatim uses different keys depending on settlement type
+        for key in ["city", "town", "village", "hamlet", "suburb", "county"]:
+            if key in address:
+                return address[key]
+        return None
+
+    url = "https://nominatim.openstreetmap.org/reverse"
+    params = {"lat": lat, "lon": lon, "format": "json"}
+    headers = {"User-Agent": "GeoTIR/1.0"}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params, headers=headers, timeout=10.0)
+        response.raise_for_status()
+        data = response.json()
+
+    address = data.get("address", {})
+    city = extract_city(address)
+    return {"img_id": img_id, "city": city}
 
 
 def main(args):
