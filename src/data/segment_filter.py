@@ -25,17 +25,29 @@ LANDMARK_SEGMENT_IDS = torch.tensor([
 
 
 class ImageDataset(Dataset):
-    def __init__(self, df: pl.DataFrame, img_col: str = "id", img_base_path: str = ""):
-        self.df = df
+    def __init__(
+        self,
+        df: pl.DataFrame,
+        img_col: str = "id",
+        img_base_path: str = "",
+        src_col: str = "folder",
+    ):
+        self.df = df.to_dicts()
         self.img_col = img_col
         self.img_base_path = img_base_path
+        self.src_col = src_col
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, index):
-        img_id = self.df[index][self.img_col].item()
-        path = os.path.join(self.img_base_path, (f"{img_id}.jpg" if ".jpg" not in img_id else img_id))
+        row = self.df[index]
+        img_id = row[self.img_col]
+        filename = img_id if ".jpg" in img_id else f"{img_id}.jpg"
+        if self.src_col:
+            path = os.path.join(self.img_base_path, row[self.src_col], filename)
+        else:
+            path = os.path.join(self.img_base_path, filename)
         img = Image.open(path).convert("RGB")
         size = img.size[::-1]  # (H, W) expected by post_process_semantic_segmentation
         return {"image": img, "size": size, "img_id": img_id}
@@ -78,7 +90,7 @@ def main(args):
     model.eval()
     model = torch.compile(model)
 
-    dataset = ImageDataset(df, img_col="id", img_base_path=args.img_base_path)
+    dataset = ImageDataset(df, img_col="id", img_base_path=args.img_base_path, src_col="src")
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -133,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--csv-path", type=str, default=CSV_PATH)
     parser.add_argument("--output-path", type=str, default=OUTPUT_PATH)
     parser.add_argument("--checkpoint-path", type=str, default=CHECKPOINT_PATH)
+    parser.add_argument("--src-col", type=str, default="src")
     args = parser.parse_args()
 
     main(args)
