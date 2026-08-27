@@ -938,6 +938,18 @@ wheels = [
 ]
 
 [[package]]
+name = "geonamescache"
+version = "3.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/f7/1ca0ac4ca0b7a0f21f6628094a0e4fbfb836508370e8e835294ca125536f/geonamescache-3.0.2.tar.gz", hash = "sha256:1cc7007a7a14637f665c7bd7934dc5a04a973daf4d962d789651047aa1a00cb1", size = 33569006, upload-time = "2026-07-28T11:58:32.578Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/c2/52f1b29de8839b4b55cd2641dfd722a6a94953d74fa82514e26084a92318/geonamescache-3.0.2-py3-none-any.whl", hash = "sha256:b830e8942f2d58c7e68782dcf4dff2ffe8c4104a35ee881ed1ad4023cefcdba4", size = 35000667, upload-time = "2026-07-28T11:53:11.865Z" },
+]
+
+[[package]]
 name = "gitdb"
 version = "4.0.12"
 source = { registry = "https://pypi.org/simple" }
@@ -3397,6 +3409,7 @@ dependencies = [
     { name = "datasets" },
     { name = "faiss-cpu" },
     { name = "ftfy" },
+    { name = "geonamescache" },
     { name = "hdbscan" },
     { name = "ipywidgets" },
     { name = "loralib" },
@@ -3444,6 +3457,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "faiss-cpu", specifier = ">=1.13.2" },
     { name = "ftfy", specifier = ">=6.3.1" },
+    { name = "geonamescache", specifier = ">=3.0.2" },
     { name = "hdbscan", specifier = ">=0.8.44" },
     { name = "ipywidgets", specifier = ">=8.1.8" },
     { name = "loralib", specifier = ">=0.1.2" },

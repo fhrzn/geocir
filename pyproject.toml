@@ -12,6 +12,7 @@ dependencies = [
     "datasets>=4.5.0",
     "faiss-cpu>=1.13.2",
     "ftfy>=6.3.1",
+    "geonamescache>=3.0.2",
     "hdbscan>=0.8.44",
     "ipywidgets>=8.1.8",
     "loralib>=0.1.2",
