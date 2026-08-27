@@ -13,3 +13,4 @@ mlflow.db
 .env
 wandb/
 *.log
+.claude/worktrees
