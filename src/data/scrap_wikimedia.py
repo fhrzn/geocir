@@ -41,12 +41,15 @@ WIKIDATA_OSM_PROPS = [("P402", "relation"), ("P11693", "node"), ("P10689", "way"
 
 
 @dataclass
-class CommonsCoordinateResult:
+class CommonsPageResult:
     input_url: str
     resolved_url: str
-    geohack_url: str
-    latitude: float
-    longitude: float
+    geohack_url: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    poi_name: Optional[str] = None
+    wikidata_id: Optional[str] = None
+    instance_tag: Optional[str] = None
 
 
 def _to_decimal(parts: list[str], hemisphere: str) -> float:
@@ -187,56 +190,72 @@ async def _fetch_with_retries(
     raise RuntimeError("Retry loop exhausted")
 
 
-async def scrape_commons_coordinates_async(
-    client: httpx.AsyncClient,
-    category_url: str,
-    max_pages: int = 12,
-    timeout: float = 20.0,
-) -> CommonsCoordinateResult:
-    queue: deque[str] = deque([category_url.replace("http://", "https://")])
-    seen: set[str] = set()
+def _parse_commons_page(html: str, base_url: str) -> dict:
+    """Parse a Commons category page once, pulling every field we might need.
 
-    while queue and len(seen) < max_pages:
-        url = queue.popleft()
-        if url in seen:
-            continue
-        seen.add(url)
+    Pure-CPU work (lxml tree build + selectors). Run via ``asyncio.to_thread`` so
+    it overlaps network I/O instead of blocking the event loop.
+    """
+    soup = BeautifulSoup(html, "lxml")
 
-        resp = await _fetch_with_retries(client, url=url, timeout=timeout)
-        resolved = str(resp.url)
-        if resolved not in seen and len(seen) < max_pages:
-            queue.appendleft(resolved)
+    geohack_url = _find_geohack_link(soup, base_url)
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        geohack = _find_geohack_link(soup, resolved)
-        if geohack:
-            lat, lon = parse_geohack_url(geohack)
-            return CommonsCoordinateResult(category_url, resolved, geohack, lat, lon)
-
-        for next_url in _extract_candidate_links(soup, resolved):
-            if next_url not in seen and next_url not in queue:
-                queue.append(next_url)
-
-    raise ValueError(
-        f"No GeoHack coordinates found after scanning {len(seen)} page(s) for {category_url}"
+    h1 = soup.find("h1", id="firstHeading")
+    poi_name = (
+        re.sub(r"^Category:\s*", "", h1.get_text(strip=True), flags=re.IGNORECASE)
+        if h1
+        else None
     )
 
+    wikidata_id = None
+    for a in soup.select('a[href*="wikidata.org"]'):
+        m = re.search(r"/(Q\d+)(?:[^0-9]|$)", a.get("href", ""))
+        if m:
+            wikidata_id = m.group(1)
+            break
 
-async def scrape_commons_meta_async(
+    # Instance/subclass labels from the Wikidata infobox rendered on the page
+    instance_tags: list[str] = []
+    infobox = soup.select_one("#wdinfobox")
+    if infobox:
+        target_rows = {"instance of", "subclass of"}
+        for row in infobox.select("tr"):
+            th = row.select_one("th.wikidatainfobox-lcell")
+            if th and th.get_text(strip=True).lower() in target_rows:
+                td = row.select_one("td")
+                if td:
+                    instance_tags.extend(
+                        a.get_text(strip=True) for a in td.select("a") if a.get_text(strip=True)
+                    )
+
+    return {
+        "geohack_url": geohack_url,
+        "poi_name": poi_name,
+        "wikidata_id": wikidata_id,
+        "instance_tag": ",".join(instance_tags) if instance_tags else None,
+        "candidate_links": _extract_candidate_links(soup, base_url),
+    }
+
+
+async def scrape_commons_page_async(
     client: httpx.AsyncClient,
     category_url: str,
-    max_pages: int = 12,
+    *,
+    need_geohack: bool,
+    need_meta: bool,
+    max_pages: int = 4,
     timeout: float = 20.0,
-) -> dict:
-    """Scrape poi_name and wikidata_id from a Wikimedia Commons category page.
+) -> CommonsPageResult:
+    """Single BFS crawl of a Commons category page for coordinates and/or metadata.
 
-    Follows wiki-level redirects (e.g. renamed/moved categories) the same way
-    the geohack scraper does, so encoding-mangled URLs that redirect to the real
-    page are handled correctly.
+    Fetches each page once and extracts everything from the same parse, following
+    wiki-level redirects (renamed/moved categories, encoding-mangled URLs) via the
+    same candidate-link heuristics. Raises ``ValueError`` if ``need_geohack`` is set
+    but no GeoHack coordinates are found; metadata fields are best-effort.
     """
     queue: deque[str] = deque([category_url.replace("http://", "https://")])
     seen: set[str] = set()
-    best: dict = {"wikimedia_url": category_url, "poi_name": None, "wikidata_id": None, "instance_tag": None}
+    result = CommonsPageResult(input_url=category_url, resolved_url=category_url)
 
     while queue and len(seen) < max_pages:
         url = queue.popleft()
@@ -244,58 +263,42 @@ async def scrape_commons_meta_async(
             continue
         seen.add(url)
 
-        resp = await _fetch_with_retries(client, url, timeout)
+        resp = await _fetch_with_retries(client, url, timeout=timeout)
         resolved = str(resp.url)
+        result.resolved_url = resolved
         if resolved not in seen and len(seen) < max_pages:
             queue.appendleft(resolved)
 
-        soup = BeautifulSoup(resp.text, "html.parser")
+        parsed = await asyncio.to_thread(_parse_commons_page, resp.text, resolved)
 
-        h1 = soup.find("h1", id="firstHeading")
-        if h1:
-            raw = h1.get_text(strip=True)
-            poi_name = re.sub(r"^Category:\s*", "", raw, flags=re.IGNORECASE)
-        else:
-            poi_name = None
+        if need_geohack and result.latitude is None and parsed["geohack_url"]:
+            lat, lon = parse_geohack_url(parsed["geohack_url"])
+            result.geohack_url = parsed["geohack_url"]
+            result.latitude = lat
+            result.longitude = lon
 
-        wikidata_id = None
-        for a in soup.select('a[href*="wikidata.org"]'):
-            m = re.search(r"/(Q\d+)(?:[^0-9]|$)", a.get("href", ""))
-            if m:
-                wikidata_id = m.group(1)
-                break
+        if need_meta:
+            if parsed["poi_name"]:
+                result.poi_name = parsed["poi_name"]
+            if parsed["wikidata_id"]:
+                result.wikidata_id = parsed["wikidata_id"]
+            if parsed["instance_tag"]:
+                result.instance_tag = parsed["instance_tag"]
 
-        # Extract instance/subclass labels from the Wikidata infobox rendered on the page
-        instance_tags: list[str] = []
-        infobox = soup.select_one("#wdinfobox")
-        if infobox:
-            target_rows = {"instance of", "subclass of"}
-            for row in infobox.select("tr"):
-                th = row.select_one("th.wikidatainfobox-lcell")
-                if th and th.get_text(strip=True).lower() in target_rows:
-                    td = row.select_one("td")
-                    if td:
-                        instance_tags.extend(
-                            a.get_text(strip=True) for a in td.select("a") if a.get_text(strip=True)
-                        )
+        geohack_ok = (not need_geohack) or result.latitude is not None
+        meta_ok = (not need_meta) or (result.poi_name and result.wikidata_id)
+        if geohack_ok and meta_ok:
+            return result
 
-        best["wikimedia_url"] = resolved
-        if poi_name:
-            best["poi_name"] = poi_name
-        if wikidata_id:
-            best["wikidata_id"] = wikidata_id
-        if instance_tags:
-            # best["instance_tag"] = json.dumps(instance_tags, ensure_ascii=False)
-            best["instance_tag"] = ",".join(instance_tags)
-
-        if best["poi_name"] and best["wikidata_id"]:
-            return best
-
-        for next_url in _extract_candidate_links(soup, resolved):
+        for next_url in parsed["candidate_links"]:
             if next_url not in seen and next_url not in queue:
                 queue.append(next_url)
 
-    return best
+    if need_geohack and result.latitude is None:
+        raise ValueError(
+            f"No GeoHack coordinates found after scanning {len(seen)} page(s) for {category_url}"
+        )
+    return result
 
 
 async def scrape_wikidata_async(
@@ -340,7 +343,9 @@ async def scrape_wikidata_async(
         }
 
 
-def _build_fieldnames(scrape_modes: set[str], input_columns: list[str]) -> list[str]:
+def _build_fieldnames(
+    scrape_modes: set[str], input_columns: list[str], keep_input_url: bool = False
+) -> list[str]:
     """Start from the input CSV's own columns (unchanged names/order), then append
     only the derived columns this run will produce that aren't already present."""
     do_all = "all" in scrape_modes
@@ -351,6 +356,9 @@ def _build_fieldnames(scrape_modes: set[str], input_columns: list[str]) -> list[
             if name not in fields:
                 fields.append(name)
 
+    if keep_input_url:
+        # Original input URL, untouched; `wikimedia_url` still holds the resolved URL.
+        add("input_wikimedia_url")
     if do_all or "geohack" in scrape_modes:
         add("geohack_url", "latitude", "longitude")
     if do_all or "wikimedia" in scrape_modes or "osm" in scrape_modes:
@@ -384,23 +392,21 @@ async def _scrape_one_with_semaphore(
             do_wikimedia = do_all or "wikimedia" in scrape_modes or "osm" in scrape_modes
             do_osm = do_all or "osm" in scrape_modes
 
-            if do_geohack:
-                r = await scrape_commons_coordinates_async(
-                    client, scrape_url, max_pages=max_pages, timeout=timeout
+            if do_geohack or do_wikimedia:
+                page = await scrape_commons_page_async(
+                    client, scrape_url,
+                    need_geohack=do_geohack, need_meta=do_wikimedia,
+                    max_pages=max_pages, timeout=timeout,
                 )
-                result.update({
-                    "wikimedia_url": r.resolved_url,
-                    "geohack_url": r.geohack_url,
-                    "latitude": r.latitude,
-                    "longitude": r.longitude,
-                })
-
-            if do_wikimedia:
-                meta = await scrape_commons_meta_async(client, scrape_url, max_pages=max_pages, timeout=timeout)
-                result.setdefault("wikimedia_url", meta["wikimedia_url"])
-                result["poi_name"] = meta["poi_name"]
-                result["wikidata_id"] = meta["wikidata_id"]
-                result["instance_tag"] = meta["instance_tag"]
+                result["wikimedia_url"] = page.resolved_url
+                if do_geohack:
+                    result["geohack_url"] = page.geohack_url
+                    result["latitude"] = page.latitude
+                    result["longitude"] = page.longitude
+                if do_wikimedia:
+                    result["poi_name"] = page.poi_name
+                    result["wikidata_id"] = page.wikidata_id
+                    result["instance_tag"] = page.instance_tag
 
             if do_osm:
                 wikidata_id = result.get("wikidata_id")
@@ -423,7 +429,7 @@ async def scrape_many(
     scrape_modes: set[str],
     concurrency: int = 20,
     wikidata_concurrency: int = 5,
-    max_pages: int = 12,
+    max_pages: int = 4,
     timeout: float = 20.0,
     delay: float = 1.0,
 ) -> AsyncIterator[dict]:
@@ -461,16 +467,16 @@ async def scrape_many(
                 yield item
 
 
-def _dedupe_output(output_path: str, fieldnames: list[str]) -> None:
-    """Collapse duplicate rows per wikimedia_url left behind by resumed/retried runs.
+def _dedupe_output(output_path: str, fieldnames: list[str], key_col: str = "wikimedia_url") -> None:
+    """Collapse duplicate rows per ``key_col`` left behind by resumed/retried runs.
 
     Retries are appended rather than overwritten in place, so a landmark that failed
-    once and later succeeded ends up with multiple rows sharing the same wikimedia_url.
-    For each wikimedia_url, keep the most recent row without an error, falling back to
-    the most recent error row if every attempt failed.
+    once and later succeeded ends up with multiple rows sharing the same key. For each
+    key, keep the most recent row without an error, falling back to the most recent
+    error row if every attempt failed.
     """
     existing = pl.read_csv(output_path, infer_schema_length=0)
-    if "wikimedia_url" not in existing.columns or existing.is_empty():
+    if key_col not in existing.columns or existing.is_empty():
         return
 
     ok = (
@@ -483,8 +489,8 @@ def _dedupe_output(output_path: str, fieldnames: list[str]) -> None:
         existing
         .with_row_index("_row_idx")
         .with_columns(ok.alias("_ok"))
-        .sort(["wikimedia_url", "_ok", "_row_idx"])
-        .unique(subset=["wikimedia_url"], keep="last")
+        .sort([key_col, "_ok", "_row_idx"])
+        .unique(subset=[key_col], keep="last")
         .sort("_row_idx")
     )
     deduped = deduped.select([c for c in fieldnames if c in deduped.columns])
@@ -496,30 +502,37 @@ async def main(args):
 
     df = pl.read_csv(args.data_path)
 
-    # Deduplicate by landmark_id before scraping — multiple rows may share the same landmark
-    df = df.unique(subset=["landmark_id"], keep="first", maintain_order=True)
-    print(f"Loaded {len(df)} unique landmarks after dedup by landmark_id")
+    # Deduplicate by wikimedia_url before scraping — the URL is the scrape key and is
+    # finer-grained than landmark_id (multiple rows may share the same landmark_id, and
+    # a single-column `wikimedia_url` CSV has no landmark_id at all).
+    df = df.unique(subset=["wikimedia_url"], keep="first", maintain_order=True)
+    print(f"Loaded {len(df)} unique URLs after dedup by wikimedia_url")
 
     input_urls = df["wikimedia_url"].to_list()
     # Keep every original input column, keyed by wikimedia_url, so it passes through untouched.
     url_meta = {row["wikimedia_url"]: row for row in df.to_dicts()}
     url_pairs = [(url, url) for url in input_urls]
 
-    fieldnames = _build_fieldnames(scrape_modes, list(df.columns))
+    keep_input_url = args.keep_input_url
+    # Which column identifies a row for resume/dedupe: the original input URL when
+    # preserved, otherwise the redirect-resolved URL written to `wikimedia_url`.
+    key_col = "input_wikimedia_url" if keep_input_url else "wikimedia_url"
+
+    fieldnames = _build_fieldnames(scrape_modes, list(df.columns), keep_input_url)
 
     done_urls: set[str] = set()
     if os.path.exists(args.output_path):
         existing = pl.read_csv(args.output_path, infer_schema_length=0)
-        if "wikimedia_url" in existing.columns:
+        if key_col in existing.columns:
             if "error" in existing.columns:
                 succeeded = existing.filter(pl.col("error").is_null() | (pl.col("error") == ""))
             else:
                 succeeded = existing
-            done_urls = set(succeeded["wikimedia_url"].to_list())
+            done_urls = set(succeeded[key_col].to_list())
             error_count = len(existing) - len(succeeded)
             print(f"Resuming: skipping {len(done_urls)} succeeded, retrying {error_count} errored URLs")
         else:
-            print("Output file exists but has no 'wikimedia_url' column — starting fresh (output will be appended)")
+            print(f"Output file exists but has no '{key_col}' column — starting fresh (output will be appended)")
 
     pairs_to_scrape = [(inp, scr) for inp, scr in url_pairs if inp not in done_urls]
     if not pairs_to_scrape:
@@ -536,13 +549,17 @@ async def main(args):
                 scrape_modes=scrape_modes,
                 concurrency=args.worker,
                 wikidata_concurrency=args.wikidata_worker,
+                max_pages=args.max_pages,
                 delay=args.delay,
             ):
                 meta = url_meta.get(res["input_url"], {})
-                writer.writerow({**meta, **res})
+                row = {**meta, **res}
+                if keep_input_url:
+                    row["input_wikimedia_url"] = res["input_url"]
+                writer.writerow(row)
                 f.flush()
 
-    _dedupe_output(args.output_path, fieldnames)
+    _dedupe_output(args.output_path, fieldnames, key_col)
 
 
 
@@ -553,6 +570,22 @@ if __name__ == "__main__":
     parser.add_argument("--worker", type=int, default=50)
     parser.add_argument("--wikidata-worker", type=int, default=5, help="Max concurrent Wikidata API requests")
     parser.add_argument("--delay", type=float, default=1.0, help="Per-request delay in seconds")
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=4,
+        help="Max Commons pages to crawl per URL while following wiki redirects",
+    )
+    parser.add_argument(
+        "--keep-input-url",
+        action="store_true",
+        help=(
+            "Keep the original input URL in a separate 'input_wikimedia_url' column. "
+            "By default 'wikimedia_url' is overwritten with the redirect-resolved URL "
+            "and the original is lost. When set, resume/dedupe key on the original URL "
+            "instead of the resolved one (so redirected rows are not re-scraped)."
+        ),
+    )
     parser.add_argument(
         "--scrape",
         nargs="+",
