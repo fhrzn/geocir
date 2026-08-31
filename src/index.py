@@ -98,8 +98,21 @@ def ingest(args):
         except Exception:
             df = df.rename({"predicted_label": "category"})
 
-    dataset = GeoTIRDataset(df, base_img_path=args.img_base_path, processor=processor, src_col=args.src_col)
-    loader = DataLoader(dataset, batch_size=args.batch_size)
+    dataset = GeoTIRDataset(
+        df,
+        base_img_path=args.img_base_path,
+        processor=processor,
+        src_col=args.src_col,
+        cache_dir=args.img_cache_dir,
+        cache_size=args.cache_size,
+    )
+    loader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        persistent_workers=args.num_workers > 0,
+    )
     index = build_index(_INDEX_SIZES[args.model], args.index_type)
 
     with torch.no_grad():
@@ -120,8 +133,13 @@ if __name__ == "__main__":
     parser.add_argument("--data-path", required=True)
     parser.add_argument("--ckpt-path")
     parser.add_argument("--img-base-path", default="../datasets/mp16-reason/images")
-    parser.add_argument("--src-col", default="folder")
+    parser.add_argument("--src-col", default="src")
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--img-cache-dir", default=None,
+                        help="reuse the local downscaled-JPEG cache built during training "
+                             "(same dir + same --cache-size)")
+    parser.add_argument("--cache-size", type=int, default=256)
     parser.add_argument("--index-type", default="flat_ip")
     parser.add_argument("--output-dir")
 

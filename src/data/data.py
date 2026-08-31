@@ -1,9 +1,12 @@
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 
 import polars as pl
+import torch
 from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
+from tqdm.auto import tqdm
 from transformers import AutoImageProcessor, CLIPProcessor
 
 
@@ -79,50 +82,123 @@ class GeoTIRDataset(Dataset):
         caption_col: str = "caption",
         use_template: bool = True,
         max_text_length: int = 77,
-        src_col: str = "folder"
+        src_col: str = "src",
+        cache_dir: str | None = None,
+        cache_size: int = 256,
     ):
         super().__init__()
         self.df = df.to_dicts()
         self.base_img_path = base_img_path
-        self.processor = processor
+        self.image_processor = processor.image_processor
         self.img_col = img_col
         self.id_col = id_col
         self.caption_col = caption_col
         self.use_template = use_template
-        self.max_text_length = max_text_length
         self.src_col = src_col
+        # local NVMe cache of downscaled JPEGs -> avoids re-reading the NAS every epoch
+        self.cache_dir = cache_dir
+        self.cache_size = cache_size
 
+        # tokenize text ONCE: dedupe -> tokenize unique -> scatter back per row
+        texts = [self._caption(r) for r in self.df]
+        uniq = sorted(set(texts))
+        tok = processor.tokenizer(
+            uniq,
+            max_length=max_text_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+        pos = {t: i for i, t in enumerate(uniq)}
+        gather = torch.tensor([pos[t] for t in texts])
+        self.input_ids = tok["input_ids"][gather].contiguous()
+        self.attention_mask = tok["attention_mask"][gather].contiguous()
+
+    def _caption(self, row: dict) -> str:
+        if self.use_template:
+            return f"A {row['category']} landmark located in {row['country']}"
+        return row[self.caption_col]
+
+    def _rel_path(self, row: dict) -> str:
+        name = str(row[self.img_col])
+        name = name if name.endswith(".jpg") else f"{name}.jpg"
+        return os.path.join(row[self.src_col], name)
+
+    def ensure_cached(self, index: int) -> None:
+        """Populate the local cache entry for one row (used by warm_image_cache)."""
+        if self.cache_dir is None:
+            return
+        rel = self._rel_path(self.df[index])
+        dst = os.path.join(self.cache_dir, rel)
+        if os.path.exists(dst):
+            return
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        src = os.path.join(self.base_img_path, rel)
+        with Image.open(src) as im:
+            im.draft("RGB", (self.cache_size, self.cache_size))
+            im = im.convert("RGB")
+            im.thumbnail((self.cache_size, self.cache_size), Image.BILINEAR)
+            tmp = f"{dst}.{os.getpid()}.tmp"
+            im.save(tmp, format="JPEG", quality=90)
+        os.replace(tmp, dst)
+
+    def _load_image(self, row: dict) -> Image.Image:
+        rel = self._rel_path(row)
+        if self.cache_dir is not None:
+            dst = os.path.join(self.cache_dir, rel)
+            if os.path.exists(dst):
+                with Image.open(dst) as im:
+                    return im.convert("RGB")
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with Image.open(os.path.join(self.base_img_path, rel)) as im:
+                im.draft("RGB", (self.cache_size, self.cache_size))
+                im = im.convert("RGB")
+                im.thumbnail((self.cache_size, self.cache_size), Image.BILINEAR)
+                tmp = f"{dst}.{os.getpid()}.tmp"
+                im.save(tmp, format="JPEG", quality=90)
+            os.replace(tmp, dst)
+            return im
+        with Image.open(os.path.join(self.base_img_path, rel)) as im:
+            im.draft("RGB", (self.cache_size, self.cache_size))
+            return im.convert("RGB")
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, index: int):
         row = self.df[index]
-        path = row[self.img_col]
-        path = path if ".jpg" in path else f"{path}.jpg"
-        path = os.path.join(self.base_img_path, row[self.src_col], path)
-
-        img = Image.open(path).convert("RGB")
-        
-        if self.use_template:
-            caption = f"A {row['category']} landmark located in {row['country']}"
-        else:
-            caption = row[self.caption_col]
-
-        processed = self.processor(
-            images=img,
-            text=caption,
-            max_length=self.max_text_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-
+        img = self._load_image(row)
+        pixel_values = self.image_processor(images=img, return_tensors="pt")[
+            "pixel_values"
+        ].squeeze(0)
         return {
             "category": row["category"],
             "country": row["country"],
-            **{k: v.squeeze(0) for k, v in processed.items()},
+            "pixel_values": pixel_values,
+            "input_ids": self.input_ids[index],
+            "attention_mask": self.attention_mask[index],
         }
+
+
+def warm_image_cache(dataset: "GeoTIRDataset", workers: int = 32) -> None:
+    """Pre-fill the local cache from the NAS in parallel before training starts."""
+    if dataset.cache_dir is None:
+        return
+    n = len(dataset)
+    errors = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = ex.map(_safe_ensure_cached, (dataset,) * n, range(n))
+        for ok in tqdm(futs, total=n, desc="warm cache", unit="img"):
+            errors += not ok
+    print(f"cache warm done: {n - errors}/{n} cached ({errors} errors) -> {dataset.cache_dir}")
+
+
+def _safe_ensure_cached(dataset: "GeoTIRDataset", index: int) -> bool:
+    try:
+        dataset.ensure_cached(index)
+        return True
+    except Exception:  # noqa: BLE001 - a few unreadable images shouldn't abort the warm-up
+        return False
 
 
 class PairAwareBatchSampler(BatchSampler):
