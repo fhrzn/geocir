@@ -45,18 +45,25 @@ def add_record_to_index(index: faiss.IndexHNSWFlat, embeddings: np.ndarray):
     index.add(embeddings)
 
 
-def save_index(index: faiss.IndexHNSWFlat, metadata: List[Dict], target_dir: str):
+def save_index(
+    index: faiss.IndexHNSWFlat,
+    metadata: List[Dict],
+    target_dir: str,
+    prefix: str = "",
+):
     if not os.path.exists(target_dir):
         os.makedirs(target_dir, exist_ok=True)
 
-    faiss.write_index(index, os.path.join(target_dir, "index.index"))
-    with open(os.path.join(target_dir, "metadata.json"), "w") as f:
+    stem = f"{prefix}_" if prefix else ""
+    faiss.write_index(index, os.path.join(target_dir, f"{stem}index.index"))
+    with open(os.path.join(target_dir, f"{stem}metadata.json"), "w") as f:
         json.dump({"metadata": metadata}, f)
 
 
-def read_index(target_dir: str):
-    index = faiss.read_index(os.path.join(target_dir, "index.index"))
-    with open(os.path.join(target_dir, "metadata.json"), "r") as f:
+def read_index(target_dir: str, prefix: str = ""):
+    stem = f"{prefix}_" if prefix else ""
+    index = faiss.read_index(os.path.join(target_dir, f"{stem}index.index"))
+    with open(os.path.join(target_dir, f"{stem}metadata.json"), "r") as f:
         metadata = json.loads(f.read())
 
     return index, metadata

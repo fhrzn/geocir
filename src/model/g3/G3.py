@@ -2,8 +2,35 @@ import torch
 import torch.nn as nn
 from pyproj import Proj, Transformer
 from transformers import CLIPImageProcessor, CLIPModel, CLIPProcessor, CLIPTokenizer
+import os
 
 from .rff.layers import GaussianEncoding
+
+
+DEFAULT_CHECKPOINT = os.path.join(os.path.dirname(__file__), "checkpoint", "g3.pth")
+
+# The released `g3.pth` checkpoint follows the naming used in the original G3
+# repository. This module renamed a few projection heads, so remap the prefixes
+# before calling `load_state_dict`. Shapes are identical, only the names differ.
+_CHECKPOINT_KEY_MAP = {
+    "vision_projection_else_1.": "img2txt_proj.",
+    "text_projection_else.": "txt2img_proj.",
+    "vision_projection_else_2.": "img2loc_proj.",
+    "location_projection_else.": "loc2img_proj.",
+    "vision_projection.": "vision_proj.",
+    "text_projection.": "text_proj.",
+}
+
+
+def _remap_checkpoint_keys(state_dict):
+    remapped = {}
+    for key, value in state_dict.items():
+        for old_prefix, new_prefix in _CHECKPOINT_KEY_MAP.items():
+            if key.startswith(old_prefix):
+                key = new_prefix + key[len(old_prefix) :]
+                break
+        remapped[key] = value
+    return remapped
 
 
 class LocationEncoderCapsule(nn.Module):
@@ -117,6 +144,26 @@ class G3(torch.nn.Module):
             max_length=77,
             return_tensors="pt",
         )
+
+    def load_checkpoint(self, checkpoint_path=DEFAULT_CHECKPOINT, strict=True):
+        """Load a released G3 checkpoint into this model.
+
+        Handles the parameter-name differences between the original G3 repo
+        (used by `g3.pth`) and this module. Returns the `(missing_keys,
+        unexpected_keys)` reported by `load_state_dict`.
+        """
+        state_dict = torch.load(checkpoint_path, map_location="cpu")
+        state_dict = _remap_checkpoint_keys(state_dict)
+        return self.load_state_dict(state_dict, strict=strict)
+
+    @classmethod
+    def from_pretrained(
+        cls, checkpoint_path=DEFAULT_CHECKPOINT, device="cuda", strict=True
+    ):
+        """Build a G3 model and load `checkpoint_path` onto `device`."""
+        model = cls()
+        model.load_checkpoint(checkpoint_path, strict=strict)
+        return model.to(device)
 
     def forward(self, images, texts, longitude, latitude, return_loss=True):
 

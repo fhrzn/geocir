@@ -85,6 +85,8 @@ class GeoTIRDataset(Dataset):
         use_template: bool = True,
         max_text_length: int = 77,
         src_col: str = "src",
+        lat_col: str = "latitude",
+        lon_col: str = "longitude",
         cache_dir: str | None = None,
         cache_size: int = 256,
         cell_weights: dict | None = None,
@@ -116,6 +118,15 @@ class GeoTIRDataset(Dataset):
             )
         else:
             self.weights = None
+
+        # per-row (lat, lon) so a GPS index can be built in the same pass as the
+        # image index (order matches CustomLocationEncoder / GeoCLIP: lat, then lon)
+        if self.df and lat_col in self.df[0] and lon_col in self.df[0]:
+            self.latlon = torch.tensor(
+                [[r[lat_col], r[lon_col]] for r in self.df], dtype=torch.float32
+            )
+        else:
+            self.latlon = None
 
         # tokenize text ONCE: dedupe -> tokenize unique -> scatter back per row
         texts = [self._caption(r) for r in self.df]
@@ -201,6 +212,8 @@ class GeoTIRDataset(Dataset):
         }
         if self.weights is not None:
             item["weight"] = self.weights[index]
+        if self.latlon is not None:
+            item["latlon"] = self.latlon[index]
         return item
 
 
@@ -383,4 +396,6 @@ def geo_collate_fn(batch: list[dict]) -> dict:
     }
     if "weight" in batch[0]:
         out["weight"] = torch.stack([b["weight"] for b in batch])
+    if "latlon" in batch[0]:
+        out["latlon"] = torch.stack([b["latlon"] for b in batch])
     return out
