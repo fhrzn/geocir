@@ -5,9 +5,9 @@ from peft import LoraConfig, get_peft_model
 from transformers import CLIPModel
 
 
-def build_positive_mask(categories, countries):
-    keys = torch.tensor([hash(f"{c}||{r}") for c, r in zip(categories, countries)])
-    mask = (keys.unsqueeze(0) == keys.unsqueeze(1))
+def build_positive_mask(cell_ids: torch.Tensor) -> torch.Tensor:
+    """(N, N) bool: True where two samples share a (category, country) cell id."""
+    mask = cell_ids.unsqueeze(0) == cell_ids.unsqueeze(1)
     mask.fill_diagonal_(False)
     return mask
 
@@ -17,6 +17,7 @@ def multi_positive_infonce_loss(
     text_embeds: torch.Tensor,    # (N, D) normalized
     positive_mask: torch.Tensor,  # (N, N) bool
     temperature: float,
+    weights: torch.Tensor | None = None,  # (N,) per-anchor loss weights
 ) -> torch.Tensor:
     """
     Symmetric multi-positive InfoNCE loss.
@@ -24,22 +25,31 @@ def multi_positive_infonce_loss(
     For each anchor i, positives are all j where positive_mask[i, j] = True.
     All other j (including diagonal) are treated as negatives.
     Loss is averaged over both image->text and text->image directions.
+
+    `weights` (optional): a per-anchor weight (e.g. class-balanced inverse
+    frequency of the anchor's cell). Anchors with no in-batch positive are
+    excluded from both the sum and the weight normaliser.
     """
     logits_i2t = (image_embeds @ text_embeds.T) / temperature
     logits_t2i = (text_embeds @ image_embeds.T) / temperature
 
     positive_mask = positive_mask.to(image_embeds.device)
+    if weights is not None:
+        weights = weights.to(image_embeds.device)
 
     def _loss_one_direction(logits: torch.Tensor) -> torch.Tensor:
         has_positive = positive_mask.any(dim=1)
-        if not positive_mask.any():
-            return torch.tensor(0.0, device=logits.device, requires_grad=True)
+        if not has_positive.any():
+            return logits.sum() * 0.0  # keep the graph connected, contribute nothing
         log_denom = torch.logsumexp(logits, dim=1)
         log_probs = logits - log_denom.unsqueeze(1)
-        pos_log_probs = log_probs * positive_mask.float()
+        pos_log_probs = (log_probs * positive_mask.float()).sum(dim=1)
         num_positives = positive_mask.float().sum(dim=1).clamp(min=1)
-        per_anchor_loss = -pos_log_probs.sum(dim=1) / num_positives
-        return per_anchor_loss[has_positive].mean()
+        per_anchor_loss = (-pos_log_probs / num_positives)[has_positive]
+        if weights is None:
+            return per_anchor_loss.mean()
+        w = weights[has_positive]
+        return (per_anchor_loss * w).sum() / w.sum().clamp(min=1e-8)
 
     loss_i2t = _loss_one_direction(logits_i2t)
     loss_t2i = _loss_one_direction(logits_t2i)
@@ -94,13 +104,14 @@ class GeoTIRModel(nn.Module):
         image_embeds = self.encode_images(batch["pixel_values"])
         text_embeds = self.encode_texts(batch["input_ids"], batch["attention_mask"])
 
-        positive_mask = build_positive_mask(batch["category"], batch["country"])
+        positive_mask = build_positive_mask(batch["cell_id"].to(image_embeds.device))
 
         loss = multi_positive_infonce_loss(
             image_embeds=image_embeds,
             text_embeds=text_embeds,
             positive_mask=positive_mask,
             temperature=self.temperature,
+            weights=batch.get("weight"),
         )
 
         return {
