@@ -24,6 +24,21 @@ def map_k(all_pred: List[List[int]], all_gt: List[List[int]], k: int):
     return sum(ap_scores) / len(ap_scores)
 
 
+def recall_k(pred: List[int], gt: List[int], k: int):
+    """Fraction of the relevant items that appear in the top-k retrieved."""
+    R = len(gt)
+    if R == 0:
+        return 0.0
+    gt_set = set(gt)
+    found = sum(1 for img_id in pred[:k] if img_id in gt_set)
+    return found / R
+
+
+def mean_recall_k(all_pred: List[List[int]], all_gt: List[List[int]], k: int):
+    scores = [recall_k(pred, gt, k) for pred, gt in zip(all_pred, all_gt)]
+    return sum(scores) / len(scores)
+
+
 def evaluate(
     all_pred: List[List[int]],
     all_gt: List[List[int]],
@@ -40,5 +55,6 @@ def evaluate(
     results = {}
     for k in ks:
         results[f"mAP@{k}"] = map_k(all_pred, all_gt, k)
+        results[f"Recall@{k}"] = mean_recall_k(all_pred, all_gt, k)
 
     return results

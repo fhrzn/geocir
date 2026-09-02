@@ -8,7 +8,12 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from transformers import CLIPProcessor, get_cosine_schedule_with_warmup
 
-from src.data.data import GeoTIRDataset, geo_collate_fn, warm_image_cache
+from src.data.data import (
+    GeoTIRDataset,
+    PKBatchSampler,
+    geo_collate_fn,
+    warm_image_cache,
+)
 from src.model.geotir.model import GeoTIRModel
 from src.utils import get_device
 
@@ -87,29 +92,22 @@ def train(args):
 
     train_df = read_split(args.data, args.sample_n, args.seed)
 
-    # Auto-compute pair_cap from data if not explicitly set:
-    # 75th-percentile of (category, country) group sizes // 2, clamped to at least 1.
-    # if args.pair_cap is None:
-    #     group_sizes = (
-    #         train_df.group_by(["category", "country"])
-    #         .agg(pl.len().alias("n"))
-    #         .filter(pl.col("n") >= 2)["n"]
-    #     )
-    #     args.pair_cap = max(int(group_sizes.quantile(0.75)) // 2, 1)
-    #     print(f"Auto pair_cap: {args.pair_cap}")
+    # class-balanced per-cell weights: w_c = (1-beta) / (1 - beta**n_c), mean-1 normalised.
+    # (Cui et al. 2019, "effective number of samples".) beta=0 -> uniform weights.
+    cell_weights = None
+    if args.cb_beta > 0:
+        sizes = train_df.group_by(["category", "country"]).agg(pl.len().alias("n"))
+        beta = args.cb_beta
+        raw = {
+            (r["category"], r["country"]): (1.0 - beta) / (1.0 - beta ** r["n"])
+            for r in sizes.iter_rows(named=True)
+        }
+        mean_w = sum(raw.values()) / len(raw)
+        cell_weights = {k: v / mean_w for k, v in raw.items()}
+        print(f"class-balanced weighting on (beta={beta}); "
+              f"weight range {min(cell_weights.values()):.3f}..{max(cell_weights.values()):.1f}")
 
-    dl_kwargs = dict(
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        collate_fn=geo_collate_fn,
-        persistent_workers=args.num_workers > 0,
-        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
-    )
-
-    dataset = GeoTIRDataset(
-        df=train_df,
+    common_ds = dict(
         base_img_path=args.img_path,
         processor=processor,
         use_template=args.use_caption_template,
@@ -119,27 +117,34 @@ def train(args):
         cache_dir=args.img_cache_dir,
         cache_size=args.cache_size,
     )
-    if args.warm_cache_workers > 0:
-        warm_image_cache(dataset, workers=args.warm_cache_workers)
-    loader = DataLoader(dataset, **dl_kwargs)
+    dl_common = dict(
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=geo_collate_fn,
+        persistent_workers=args.num_workers > 0,
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
+    )
+
+    def make_loader(df, ds_kwargs):
+        ds = GeoTIRDataset(df=df, cell_weights=cell_weights, **common_ds, **ds_kwargs)
+        if args.warm_cache_workers > 0:
+            warm_image_cache(ds, workers=args.warm_cache_workers)
+        if args.balanced_sampler:
+            sampler = PKBatchSampler(
+                df, batch_size=args.batch_size,
+                images_per_cell=args.images_per_cell, cap=args.cell_cap,
+                seed=args.seed,
+            )
+            return DataLoader(ds, batch_sampler=sampler, **dl_common), sampler
+        return DataLoader(ds, batch_size=args.batch_size, shuffle=True,
+                          drop_last=True, **dl_common), None
+
+    loader, train_sampler = make_loader(train_df, {})
 
     val_loader = None
     if args.val_data:
         val_df = read_split(args.val_data, args.sample_n, args.seed)
-        val_dataset = GeoTIRDataset(
-            df=val_df,
-            base_img_path=args.img_path,
-            processor=processor,
-            use_template=args.use_caption_template,
-            max_text_length=args.max_text_length,
-            src_col=args.src_col,
-            caption_col=args.caption_col,
-            cache_dir=args.img_cache_dir,
-            cache_size=args.cache_size,
-        )
-        if args.warm_cache_workers > 0:
-            warm_image_cache(val_dataset, workers=args.warm_cache_workers)
-        val_loader = DataLoader(val_dataset, **dl_kwargs)
+        val_loader, _ = make_loader(val_df, {})
 
     model = GeoTIRModel(
         clip_model_name=CLIP_MODEL_NAME,
@@ -174,7 +179,10 @@ def train(args):
         "lr": args.lr,
         "weight_decay": args.weight_decay,
         "epochs": args.epochs,
-        # "pair_cap": args.pair_cap,
+        "balanced_sampler": args.balanced_sampler,
+        "images_per_cell": args.images_per_cell,
+        "cell_cap": args.cell_cap,
+        "cb_beta": args.cb_beta,
         "warmup_ratio": args.warmup_ratio,
         "scheduler": "cosine",
     }
@@ -195,6 +203,8 @@ def train(args):
         print(f"Checkpoints: {ckpt_dir}")
 
         for epoch in tqdm(range(1, args.epochs + 1), desc="finetune"):
+            if train_sampler is not None:
+                train_sampler.set_epoch(epoch)  # reshuffle cells/images each epoch
             epoch_loss, global_step = train_one_epoch(
                 model, loader, optimizer, scheduler, device, epoch, global_step
             )
@@ -232,17 +242,18 @@ def train(args):
                 if improved:
                     best_path = ckpt_dir / "best.pt"
                     torch.save(ckpt, best_path)
-                    artifact = wandb.Artifact(
-                        name=f"{args.run_name}-best",
-                        type="model",
-                        metadata={
-                            "epoch": epoch,
-                            "train_loss": epoch_loss,
-                            "monitor_loss": best_loss,
-                        },
-                    )
-                    artifact.add_file(str(best_path))
-                    run.log_artifact(artifact)
+                    # wandb artifact logging disabled
+                    # artifact = wandb.Artifact(
+                    #     name=f"{args.run_name}-best",
+                    #     type="model",
+                    #     metadata={
+                    #         "epoch": epoch,
+                    #         "train_loss": epoch_loss,
+                    #         "monitor_loss": best_loss,
+                    #     },
+                    # )
+                    # artifact.add_file(str(best_path))
+                    # run.log_artifact(artifact)
                     tqdm.write(f"  -> best saved (loss {best_loss:.4f})")
 
             if (
@@ -267,6 +278,17 @@ def main():
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--use-caption-template", action="store_true")
+    parser.add_argument("--balanced-sampler", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="P cells x K images per batch so every anchor has an "
+                             "in-batch positive and rare cells are seen each epoch")
+    parser.add_argument("--images-per-cell", type=int, default=4,
+                        help="K: images sampled per cell per batch (batch_size must divide by it)")
+    parser.add_argument("--cell-cap", type=int, default=256,
+                        help="max images drawn per cell per epoch (down-weights head cells)")
+    parser.add_argument("--cb-beta", type=float, default=0.999,
+                        help="class-balanced loss reweighting beta (0 disables); "
+                             "0.99-0.9999 typical")
     parser.add_argument("--src-col", default="src")
     parser.add_argument("--caption-col", default="caption")
     parser.add_argument("--num-workers", type=int, default=8)

@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModel, AutoProcessor
 
-from src.data.data import GeoTIRDataset
+from src.data.data import GeoTIRDataset, warm_image_cache
 from src.model.g3 import G3
 from src.model.geoclip import GeoCLIP
 from src.model.geotir.model import GeoTIRModel
@@ -106,6 +106,9 @@ def ingest(args):
         cache_dir=args.img_cache_dir,
         cache_size=args.cache_size,
     )
+    if args.warm_cache_workers > 0:
+        warm_image_cache(dataset, workers=args.warm_cache_workers)
+
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -140,6 +143,9 @@ if __name__ == "__main__":
                         help="reuse the local downscaled-JPEG cache built during training "
                              "(same dir + same --cache-size)")
     parser.add_argument("--cache-size", type=int, default=256)
+    parser.add_argument("--warm-cache-workers", type=int, default=0,
+                        help="threads to pre-fill the cache from the NAS before encoding "
+                             "(0 = fill lazily during the pass)")
     parser.add_argument("--index-type", default="flat_ip")
     parser.add_argument("--output-dir")
 
