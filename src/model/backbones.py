@@ -2,8 +2,9 @@
 evaluation (`src/evaluate.py`).
 
 Both entry points need the same thing: instantiate a retrieval backbone (CLIP /
-G3 / GeoCLIP / GeoTIR) with its weights, then encode either images (to build the
-FAISS index) or query text (to search it). This module owns that once.
+G3 / GeoCLIP / GeoTIR / UniIR / SigLIP / BLIP / BLIP-2) with its weights, then
+encode either images (to build the FAISS index) or query text (to search it).
+This module owns that once.
 
     bb = load_backbone("geotir", device, ckpt_path=...)
     img_np   = bb.encode_image(batch)          # (B, bb.image_dim) float32 numpy
@@ -27,7 +28,10 @@ from src.model.geoclip import GeoCLIP
 from src.model.geotir.model import GeoTIRModel
 
 CLIP_MODEL_NAME = "openai/clip-vit-large-patch14"
-MODEL_NAMES = ("clip", "g3", "geoclip", "geotir")
+SIGLIP_MODEL_NAME = "google/siglip-so400m-patch14-384"
+BLIP_MODEL_NAME = "Salesforce/blip-itm-base-coco"
+BLIP2_MODEL_NAME = "Salesforce/blip2-itm-vit-g"
+MODEL_NAMES = ("clip", "g3", "geoclip", "geotir", "uniir", "siglip", "blip", "blip2")
 
 ImgEncoder = Callable[[dict], np.ndarray]
 TextEncoder = Callable[[list[str], int], torch.Tensor]
@@ -62,6 +66,14 @@ def load_backbone(name: str, device, ckpt_path: str | None = None) -> Backbone:
         return _geoclip(device)
     if name == "geotir":
         return _geotir(device, ckpt_path)
+    if name == "uniir":
+        return _uniir(device, ckpt_path)
+    if name == "siglip":
+        return _siglip(device)
+    if name == "blip":
+        return _blip(device)
+    if name == "blip2":
+        return _blip2(device)
     raise ValueError(f"unknown model {name!r}; choose from {MODEL_NAMES}")
 
 
@@ -208,3 +220,165 @@ def _geotir(device, ckpt_path: str | None) -> Backbone:
         return torch.cat(embs, dim=0)
 
     return Backbone("geotir", model, processor, 768, encode_image, encode_text)
+
+
+# --------------------------------------------------------------------------- #
+# UniIR CLIP-ScoreFusion (M-BEIR fine-tuned ViT-L/14; used image-only)         #
+# --------------------------------------------------------------------------- #
+def _uniir(device, ckpt_path: str | None) -> Backbone:
+    from src.model.uniir.model import EMBED_DIM, load_uniir_clip_sf
+
+    model, processor = load_uniir_clip_sf(device, ckpt_path)
+    tokenize = processor.tokenizer.tokenize_fn
+
+    def encode_image(batch):
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            out = model.encode_image(batch["pixel_values"].to(device))
+        return F.normalize(out.float(), dim=-1).cpu().numpy()
+
+    def encode_text(texts, batch_size):
+        embs = []
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            for chunk in _text_batches(texts, batch_size):
+                tok = tokenize(list(chunk)).to(device)
+                feats = model.encode_text(tok)
+                embs.append(F.normalize(feats.float(), dim=-1).cpu())
+        return torch.cat(embs, dim=0)
+
+    return Backbone("uniir", model, processor, EMBED_DIM, encode_image, encode_text)
+
+
+class _MaskTokenizerShim:
+    """Wrap a tokenizer so it always yields an ``attention_mask`` (SigLIP omits it,
+    which breaks ``GeoTIRDataset``; SigLIP pads to a fixed length with full attention)."""
+
+    def __init__(self, tok):
+        self._tok = tok
+
+    def __getattr__(self, k):
+        return getattr(self._tok, k)
+
+    def __call__(self, *args, **kwargs):
+        out = self._tok(*args, **kwargs)
+        if "input_ids" in out and "attention_mask" not in out:
+            ids = out["input_ids"]
+            out["attention_mask"] = (
+                torch.ones_like(ids)
+                if torch.is_tensor(ids)
+                else [[1] * len(x) for x in ids]
+            )
+        return out
+
+
+class _ProcessorShim:
+    def __init__(self, proc):
+        self._proc = proc
+        self.image_processor = proc.image_processor
+        self.tokenizer = _MaskTokenizerShim(proc.tokenizer)
+
+    def __getattr__(self, k):
+        return getattr(self._proc, k)
+
+    def __call__(self, *args, **kwargs):
+        return self._proc(*args, **kwargs)
+
+
+# --------------------------------------------------------------------------- #
+# SigLIP (so400m/14 @ 384; image-only, dual-encoder like CLIP)                 #
+# --------------------------------------------------------------------------- #
+def _siglip(device) -> Backbone:
+    from transformers import SiglipModel
+
+    model = SiglipModel.from_pretrained(SIGLIP_MODEL_NAME).to(device).eval()
+    processor = _ProcessorShim(AutoProcessor.from_pretrained(SIGLIP_MODEL_NAME))
+
+    def encode_image(batch):
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            out = model.get_image_features(pixel_values=batch["pixel_values"].to(device))
+        return F.normalize(out.pooler_output.float(), dim=-1).cpu().numpy()
+
+    def encode_text(texts, batch_size):
+        embs = []
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            for chunk in _text_batches(texts, batch_size):
+                inp = processor(
+                    text=list(chunk), return_tensors="pt",
+                    padding="max_length", truncation=True,
+                ).to(device)
+                feats = model.get_text_features(**inp).pooler_output
+                embs.append(F.normalize(feats.float(), dim=-1).cpu())
+        return torch.cat(embs, dim=0)
+
+    return Backbone("siglip", model, processor, 1152, encode_image, encode_text)
+
+
+# --------------------------------------------------------------------------- #
+# BLIP (ITM base, COCO; ITC projection head -> 256-d)                          #
+# --------------------------------------------------------------------------- #
+def _blip(device) -> Backbone:
+    from transformers import BlipForImageTextRetrieval
+
+    model = BlipForImageTextRetrieval.from_pretrained(BLIP_MODEL_NAME).to(device).eval()
+    processor = AutoProcessor.from_pretrained(BLIP_MODEL_NAME)
+
+    def encode_image(batch):
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            vis = model.vision_model(batch["pixel_values"].to(device))[0]
+            emb = model.vision_proj(vis[:, 0, :])
+        return F.normalize(emb.float(), dim=-1).cpu().numpy()
+
+    def encode_text(texts, batch_size):
+        embs = []
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+            for chunk in _text_batches(texts, batch_size):
+                inp = processor(
+                    text=list(chunk), return_tensors="pt",
+                    padding=True, truncation=True, max_length=77,
+                ).to(device)
+                txt = model.text_encoder(
+                    input_ids=inp["input_ids"], attention_mask=inp["attention_mask"]
+                )[0]
+                emb = model.text_proj(txt[:, 0, :])
+                embs.append(F.normalize(emb.float(), dim=-1).cpu())
+        return torch.cat(embs, dim=0)
+
+    return Backbone("blip", model, processor, 256, encode_image, encode_text)
+
+
+# --------------------------------------------------------------------------- #
+# BLIP-2 (ITM ViT-g; Q-Former ITC head -> 256-d, image query tokens mean-pooled)#
+# --------------------------------------------------------------------------- #
+def _blip2(device) -> Backbone:
+    from types import SimpleNamespace
+
+    from transformers import (
+        Blip2TextModelWithProjection,
+        Blip2VisionModelWithProjection,
+    )
+
+    vision = Blip2VisionModelWithProjection.from_pretrained(BLIP2_MODEL_NAME).to(device).eval()
+    text = Blip2TextModelWithProjection.from_pretrained(BLIP2_MODEL_NAME).to(device).eval()
+    processor = AutoProcessor.from_pretrained(BLIP2_MODEL_NAME)
+
+    def encode_image(batch):
+        with torch.no_grad():
+            emb = vision(pixel_values=batch["pixel_values"].to(device)).image_embeds
+        return F.normalize(emb.mean(dim=1).float(), dim=-1).cpu().numpy()
+
+    def encode_text(texts, batch_size):
+        embs = []
+        with torch.no_grad():
+            for chunk in _text_batches(texts, batch_size):
+                # Blip2Processor(text=...) mishandles max_length; tokenize directly.
+                inp = processor.tokenizer(
+                    list(chunk), return_tensors="pt",
+                    padding=True, truncation=True, max_length=64,
+                ).to(device)
+                emb = text(
+                    input_ids=inp["input_ids"], attention_mask=inp["attention_mask"]
+                ).text_embeds[:, 0, :]
+                embs.append(F.normalize(emb.float(), dim=-1).cpu())
+        return torch.cat(embs, dim=0)
+
+    model = SimpleNamespace(vision=vision, text=text)
+    return Backbone("blip2", model, processor, 256, encode_image, encode_text)

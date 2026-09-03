@@ -27,16 +27,21 @@ def ingest(args):
         src_col=args.src_col,
         cache_dir=args.img_cache_dir,
         cache_size=args.cache_size,
+        with_text=False,  # image-only pass: skip the 245k-row token tensors
     )
     if args.warm_cache_workers > 0:
         warm_image_cache(dataset, workers=args.warm_cache_workers)
 
+    loader_kwargs = {}
+    if args.num_workers > 0:
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
-        pin_memory=True,
-        persistent_workers=args.num_workers > 0,
+        pin_memory=not args.no_pin_memory,
+        **loader_kwargs,
     )
 
     index = build_index(bb.image_dim, args.index_type)
@@ -69,6 +74,18 @@ if __name__ == "__main__":
     parser.add_argument("--src-col", default="src")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument(
+        "--prefetch-factor",
+        type=int,
+        default=2,
+        help="batches prefetched per worker; lower it (e.g. 1) to cap host RAM "
+        "used by the DataLoader queue (num_workers * prefetch_factor * batch)",
+    )
+    parser.add_argument(
+        "--no-pin-memory",
+        action="store_true",
+        help="disable pinned host memory (use when host RAM is tight / shared box)",
+    )
     parser.add_argument(
         "--img-cache-dir",
         default=None,

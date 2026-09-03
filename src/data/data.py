@@ -90,9 +90,11 @@ class GeoTIRDataset(Dataset):
         cache_dir: str | None = None,
         cache_size: int = 256,
         cell_weights: dict | None = None,
+        with_text: bool = True,
     ):
         super().__init__()
         self.df = df.to_dicts()
+        self.with_text = with_text
         self.base_img_path = base_img_path
         self.image_processor = processor.image_processor
         self.img_col = img_col
@@ -128,20 +130,24 @@ class GeoTIRDataset(Dataset):
         else:
             self.latlon = None
 
-        # tokenize text ONCE: dedupe -> tokenize unique -> scatter back per row
-        texts = [self._caption(r) for r in self.df]
-        uniq = sorted(set(texts))
-        tok = processor.tokenizer(
-            uniq,
-            max_length=max_text_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        pos = {t: i for i, t in enumerate(uniq)}
-        gather = torch.tensor([pos[t] for t in texts])
-        self.input_ids = tok["input_ids"][gather].contiguous()
-        self.attention_mask = tok["attention_mask"][gather].contiguous()
+        # tokenize text ONCE: dedupe -> tokenize unique -> scatter back per row.
+        # skipped for image-only passes (e.g. src/index.py) -> no 245k x L token
+        # tensors copied into every DataLoader worker.
+        self.input_ids = self.attention_mask = None
+        if with_text:
+            texts = [self._caption(r) for r in self.df]
+            uniq = sorted(set(texts))
+            tok = processor.tokenizer(
+                uniq,
+                max_length=max_text_length,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+            pos = {t: i for i, t in enumerate(uniq)}
+            gather = torch.tensor([pos[t] for t in texts])
+            self.input_ids = tok["input_ids"][gather].contiguous()
+            self.attention_mask = tok["attention_mask"][gather].contiguous()
 
     def _caption(self, row: dict) -> str:
         if self.use_template:
@@ -206,10 +212,11 @@ class GeoTIRDataset(Dataset):
             "category": row["category"],
             "country": row["country"],
             "pixel_values": pixel_values,
-            "input_ids": self.input_ids[index],
-            "attention_mask": self.attention_mask[index],
             "cell_id": self.cell_ids[index],
         }
+        if self.with_text:
+            item["input_ids"] = self.input_ids[index]
+            item["attention_mask"] = self.attention_mask[index]
         if self.weights is not None:
             item["weight"] = self.weights[index]
         if self.latlon is not None:
